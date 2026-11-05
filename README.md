@@ -44,13 +44,29 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
   and fans, AMS trays (edit, load, unload, re-read RFID), jog, home, extrude,
   G-code console, SD card browser, HMS errors.
 
+## Installing
+
+Download the latest `orcax1-<version>.zip` from
+[Releases](https://github.com/Doridian/OrcaX1/releases), unpack it to the
+root of the printer's SD card (in a PC, or over the printer's FTPS server),
+then over SSH run:
+
+```sh
+sh /mnt/sdcard/orcax1/install.sh
+```
+
+and open the `https://<printer-ip>:8443/` address it prints. Upgrade the same
+way. See [deploy/README.md](deploy/README.md) for details, including the
+certificate warning.
+
 ## Building
 
 Needs Node ≥ 20 and docker or podman (for the ARM cross build).
 
 ```sh
 ./scripts/build-all.sh     # engine + profiles + web/dist + dist/orcax1d-armv7
-./scripts/deploy.sh <printer-ip>
+./scripts/deploy.sh <printer-ip>   # copy the build to the printer and run install.sh
+./scripts/package.sh               # or: make the release zip in dist/
 ```
 
 Then open `https://<printer-ip>:8443/` and accept the self-signed certificate.
