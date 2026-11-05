@@ -1,6 +1,6 @@
 # Deploying orcax1d
 
-`orcax1d` is a single static ARMv7 binary (`dist/orcax1d-armv7`, about 2 MB)
+`orcax1d` is a single static ARMv7 binary (`dist/orcax1d-armv7`, about 3 MB)
 that runs on the printer's application processor under
 [X1Plus](https://github.com/X1Plus/X1Plus). It serves the web UI over HTTPS
 on port **8443** and redirects plain HTTP on port **8080** to it. Neither port
@@ -10,7 +10,8 @@ X1Plus (its own HTTP server is on port 80).
 ## Layout on the printer
 
 ```
-/mnt/sdcard/orcax1/orcax1d        the binary (copied to /tmp at start: the SD card is mounted noexec-style)
+/mnt/sdcard/orcax1/orcax1d        the binary (copied to /userdata/bin at start: the SD card is mounted noexec-style)
+/userdata/bin/orcax1d             the copy that runs (internal flash; refreshed only when it differs)
 /mnt/sdcard/orcax1/www/           the web UI (contents of web/dist)
 /mnt/sdcard/orcax1/state/         generated TLS CA + certificate
 /mnt/sdcard/orcax1/orcax1d.conf   optional ORCAX1D_* overrides (shell syntax)
@@ -50,7 +51,8 @@ X1Plus runs every `/etc/init.d/S??*` script at boot, and `/etc` lives in
 X1Plus's persistent overlay, so installing `S99orcax1d` there is all that is
 needed. Control it with `/etc/init.d/S99orcax1d {start|stop|restart}`.
 
-The init script copies the binary from the SD card to `/tmp` and runs it at
+The init script copies the binary from the SD card to `/userdata/bin`
+(internal flash, created if missing; skipped when already identical) and runs it at
 nice level 10 with the defaults for the printer (MQTT on 127.0.0.1:8883,
 access code from `/config/device/access_token`, serial from `bbl_3dpsn`, SD
 card at `/mnt/sdcard`). Upgrading is just replacing the files on the SD card

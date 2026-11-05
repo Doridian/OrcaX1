@@ -4,8 +4,9 @@
 # printer's MQTT broker, camera and SD card.
 #
 # Everything lives on the SD card under /mnt/sdcard/orcax1. The SD card is
-# FAT32 mounted without exec permission, so the binary is copied to /tmp
-# (tmpfs) before it is started.
+# FAT32 mounted without exec permission, so the binary is copied to
+# /userdata/bin (internal flash, exec allowed) before it is started. The copy
+# is skipped when it is already up to date, to spare the flash.
 #
 # Optional overrides: /mnt/sdcard/orcax1/orcax1d.conf, a shell fragment that
 # sets ORCAX1D_* variables (see `orcax1d --help`), for example
@@ -14,7 +15,7 @@
 
 BASE=/mnt/sdcard/orcax1
 SRC_BIN=$BASE/orcax1d
-RUN_DIR=/tmp/orcax1d
+RUN_DIR=/userdata/bin
 RUN_BIN=$RUN_DIR/orcax1d
 PIDFILE=/var/run/orcax1d.pid
 LOG=/tmp/orcax1d.log
@@ -26,10 +27,13 @@ start() {
 		return 1
 	fi
 	mkdir -p "$RUN_DIR" "$BASE/state"
-	cp "$SRC_BIN" "$RUN_BIN.new" && chmod 755 "$RUN_BIN.new" && mv "$RUN_BIN.new" "$RUN_BIN" || {
-		echo "FAIL (copy)"
-		return 1
-	}
+	if ! cmp -s "$SRC_BIN" "$RUN_BIN"; then
+		cp "$SRC_BIN" "$RUN_BIN.new" && chmod 755 "$RUN_BIN.new" && mv "$RUN_BIN.new" "$RUN_BIN" || {
+			rm -f "$RUN_BIN.new"
+			echo "FAIL (copy)"
+			return 1
+		}
+	fi
 	[ -f "$LOG" ] && mv "$LOG" "$LOG.old"
 	if [ -f "$BASE/orcax1d.conf" ]; then
 		set -a
