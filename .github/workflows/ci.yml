@@ -19,16 +19,16 @@ jobs:
     name: Web UI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Cache engine and Orca profiles source
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             web/public/engine
@@ -50,7 +50,7 @@ jobs:
       - name: Package web UI
         run: tar -C web/dist -czf orcax1-www.tar.gz .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: orcax1-www
           path: orcax1-www.tar.gz
@@ -60,10 +60,10 @@ jobs:
     name: Daemon (armv7 musl)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Cache cargo registry and target
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             build/cargo-registry
@@ -76,7 +76,7 @@ jobs:
           CONTAINER_ENGINE: docker
         run: ./scripts/build-daemon.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: orcax1d-armv7
           path: dist/orcax1d-armv7
@@ -90,9 +90,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release
           merge-multiple: true
