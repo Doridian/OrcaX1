@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  web:
+    name: Web UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Cache engine and Orca profiles source
+        uses: actions/cache@v4
+        with:
+          path: |
+            web/public/engine
+            build/orca-src
+          key: engine-${{ hashFiles('scripts/fetch-engine.sh', 'scripts/build-profiles.mjs') }}
+
+      - name: Fetch WASM engine
+        run: ./scripts/fetch-engine.sh
+
+      - name: Build profiles
+        run: node scripts/build-profiles.mjs
+
+      - name: Build web UI
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package web UI
+        run: tar -C web/dist -czf orcax1-www.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orcax1-www
+          path: orcax1-www.tar.gz
+          if-no-files-found: error
+
+  daemon:
+    name: Daemon (armv7 musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/cargo-registry
+            daemon/target/cross
+          key: daemon-${{ hashFiles('daemon/Cargo.lock') }}
+          restore-keys: daemon-
+
+      - name: Cross-build orcax1d
+        env:
+          CONTAINER_ENGINE: docker
+        run: ./scripts/build-daemon.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orcax1d-armv7
+          path: dist/orcax1d-armv7
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [web, daemon]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Collect assets
+        run: |
+          cp deploy/S99orcax1d release/
+          cd release
+          sha256sum orcax1d-armv7 orcax1-www.tar.gz S99orcax1d > SHA256SUMS
+          ls -l
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" release/* --title "$TAG" --generate-notes --verify-tag
+          fi
