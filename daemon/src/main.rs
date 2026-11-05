@@ -16,7 +16,7 @@ use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, post, put};
+use axum::routing::{any, delete, get, post, put};
 use clap::Parser;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::json;
@@ -32,6 +32,7 @@ pub struct App {
     pub cfg: Arc<Config>,
     pub printer: Arc<Printer>,
     pub camera: Arc<CameraHub>,
+    pub webrtc: camera::webrtc::Handle,
     pub ca_der: Option<Vec<u8>>,
     pub store: Arc<dyn store::FileStore>,
     /// Where the file API points: the SD dir, or ftps://<printer>/.
@@ -105,6 +106,7 @@ async fn info_handler(State(app): State<Arc<App>>) -> impl IntoResponse {
         "serial": app.printer.serial(),
         "mqtt_connected": app.printer.connected(),
         "camera_available": app.camera.available(),
+        "camera_error": app.camera.last_error(),
         "mode": if app.cfg.printer.is_some() { "remote" } else { "local" },
         "sd_dir": app.store_desc,
     }))
@@ -142,7 +144,8 @@ fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/api/info", get(info_handler))
         .route("/api/ws", get(printer::ws_handler))
-        .route("/api/camera", get(camera::ws_handler))
+        .route("/api/camera/whep", post(camera::whep_offer))
+        .route("/api/camera/whep/{id}", delete(camera::whep_delete))
         .route("/api/files", get(files::list).delete(files::delete))
         .route("/api/files/download", get(files::download))
         .route(
@@ -268,6 +271,7 @@ fn main() {
     let cfg = Config::parse();
     init_logging();
     tls::install_crypto_provider();
+    str0m::crypto::from_feature_flags().install_process_default();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .max_blocking_threads(8)
@@ -334,12 +338,14 @@ async fn run(mut cfg: Config) -> Result<(), String> {
         ),
     };
     info!(mode = if cfg.printer.is_some() { "remote" } else { "local" }, files = %store_desc, mqtt = %cfg.mqtt_host, "file store");
+    let webrtc = camera::webrtc::start(camera.clone(), cfg.webrtc_port);
     let app = Arc::new(App {
         store,
         store_desc,
         cfg: cfg.clone(),
         printer: printer.clone(),
         camera: camera.clone(),
+        webrtc,
         ca_der: server_tls.as_ref().and_then(|t| t.ca_der.clone()),
     });
 

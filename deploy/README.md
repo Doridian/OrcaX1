@@ -1,10 +1,11 @@
 # Deploying orcax1d
 
-`orcax1d` is a single static ARMv7 binary (`dist/orcax1d-armv7`, about 3 MB)
+`orcax1d` is a single static ARMv7 binary (`dist/orcax1d-armv7`, about 6 MB)
 that runs on the printer's application processor under
 [X1Plus](https://github.com/X1Plus/X1Plus). It serves the web UI over HTTPS
-on port **8443** and redirects plain HTTP on port **8080** to it. Neither port
-is used by Bambu's firmware (MQTT 8883, RTSPS 322, FTPS 990, ...) or by
+on port **8443** and redirects plain HTTP on port **8080** to it. The WebRTC
+camera uses **UDP 8443** (`ORCAX1D_WEBRTC_PORT`). None of these ports is
+used by Bambu's firmware (MQTT 8883, RTSPS 322, FTPS 990, ...) or by
 X1Plus (its own HTTP server is on port 80).
 
 ## Layout on the printer
@@ -61,7 +62,7 @@ and restarting.
 ## The certificate warning
 
 The browser needs a secure context (HTTPS) for the slicer's
-`SharedArrayBuffer` and for WebCodecs. On first start the daemon creates a
+`SharedArrayBuffer`. On first start the daemon creates a
 small local CA and a certificate for the printer's hostname and IPv4
 addresses in `state/` (re-issued automatically if the IP changes).
 

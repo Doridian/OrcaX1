@@ -8,8 +8,8 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
   with OrcaSlicer's own Bambu Lab system profiles for the X1 series.
 * **The printer runs only `orcax1d`**, a small static Rust binary. It serves
   the page and bridges the browser to the printer's local services: MQTT
-  (status and commands), the RTSPS camera (raw H.264, decoded in the browser
-  with WebCodecs), and the SD card (upload, list, print). It does no slicing,
+  (status and commands), the RTSPS camera (H.264 passed through as-is over
+  WebRTC), and the SD card (upload, list, print). It does no slicing,
   transcoding or compression at runtime; static assets are precompressed at
   build time.
 
@@ -17,7 +17,7 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
  browser ───────────────────────────────┐        printer (X1Plus)
  │ UI (Preact + three.js)               │  HTTPS  ┌──────────────┐  MQTT 8883 ─▶ printer
  │ slicer-worker → OrcaSlicer WASM ─────┼────────▶│   orcax1d    │  RTSPS 322 ─▶ camera
- │ G-code preview, 3MF export           │   WS    │ (static ARM) │  /mnt/sdcard (FTPS 990 when remote)
+ │ G-code preview, 3MF export           │ WS, RTC │ (static ARM) │  /mnt/sdcard (FTPS 990 when remote)
  └──────────────────────────────────────┘         └──────────────┘
 ```
 
@@ -56,8 +56,9 @@ Needs Node ≥ 20 and docker or podman (for the ARM cross build).
 Then open `https://<printer-ip>:8443/` and accept the self-signed certificate.
 See [deploy/README.md](deploy/README.md) for the details. The browser needs
 HTTPS (or `localhost`): the multithreaded engine requires
-`SharedArrayBuffer`, and the camera requires WebCodecs. Both are only
-available in a secure context.
+`SharedArrayBuffer`, which is only available in a secure context. The camera
+uses WebRTC, which needs UDP port 8443 on the printer to be reachable from
+the browser.
 
 ## Development against a real printer over LAN
 
@@ -82,7 +83,7 @@ slice state) for poking around.
 ## Layout
 
 ```
-daemon/     orcax1d (Rust): static files, /api/ws MQTT bridge, /api/camera, SD card files, /api/print
+daemon/     orcax1d (Rust): static files, /api/ws MQTT bridge, /api/camera/whep, SD card files, /api/print
 web/        UI (Vite + Preact + three.js); public/slicer-worker.js hosts the WASM engine
 scripts/    fetch-engine.sh, build-profiles.mjs (Orca BBL profiles → bundle), precompress, builds, deploy
 deploy/     init script and install notes for X1Plus

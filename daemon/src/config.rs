@@ -97,6 +97,11 @@ pub struct Config {
     #[arg(long, env = "ORCAX1D_SERIAL")]
     pub serial: Option<String>,
 
+    /// UDP port for WebRTC camera viewers, bound on every local address
+    /// (0: random per address).
+    #[arg(long, env = "ORCAX1D_WEBRTC_PORT", default_value_t = 8443)]
+    pub webrtc_port: u16,
+
     /// Camera URL (default: rtsps://bblp:<access code>@<mqtt host>:322/streaming/live/1).
     #[arg(long, env = "ORCAX1D_RTSP_URL", hide_env_values = true)]
     pub rtsp_url: Option<String>,

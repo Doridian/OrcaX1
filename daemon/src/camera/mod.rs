@@ -1,18 +1,17 @@
-//! Camera bridge: one upstream RTSP session shared by all /api/camera
-//! WebSocket clients, started on demand.
+//! Camera bridge: one upstream RTSP session, started on demand and shared
+//! by all WebRTC (WHEP) viewers.
 
 pub mod h264;
 pub mod rtsp;
+pub mod webrtc;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::State;
-use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
-use axum::response::Response;
-use bytes::Bytes;
-use serde_json::json;
+use axum::extract::{Path, State};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use tokio::sync::{Notify, broadcast};
 use tracing::{debug, info, warn};
 
@@ -21,17 +20,22 @@ use crate::config::Config;
 use h264::{Assembler, Clock, Output, parse_rtp};
 use rtsp::{Conn, Msg};
 
+/// One H.264 access unit (Annex-B; keyframes carry SPS and PPS).
 #[derive(Clone)]
-enum CamEvent {
-    Config(Utf8Bytes),
-    Frame { key: bool, data: Bytes },
-    Error(Utf8Bytes),
+struct Frame {
+    key: bool,
+    /// Presentation time in microseconds, from the RTP clock.
+    us: u64,
+    data: Arc<[u8]>,
 }
 
 pub struct CameraHub {
-    tx: broadcast::Sender<CamEvent>,
+    tx: broadcast::Sender<Frame>,
     wake: Notify,
-    config: Mutex<Option<Utf8Bytes>>,
+    /// Current codec string, e.g. "avc1.640028".
+    codec: Mutex<Option<String>>,
+    /// Why the last upstream attempt failed; cleared when a stream starts.
+    last_error: Mutex<Option<String>>,
     available: AtomicBool,
 }
 
@@ -47,7 +51,8 @@ impl CameraHub {
         Arc::new(Self {
             tx,
             wake: Notify::new(),
-            config: Mutex::new(None),
+            codec: Mutex::new(None),
+            last_error: Mutex::new(None),
             available: AtomicBool::new(true),
         })
     }
@@ -60,16 +65,13 @@ impl CameraHub {
         self.tx.receiver_count()
     }
 
-    fn error(&self, msg: &str) {
-        let _ = self.tx.send(CamEvent::Error(
-            json!({"type": "error", "message": msg}).to_string().into(),
-        ));
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.lock().unwrap().clone()
     }
 
-    fn set_codec(&self, codec: &str) {
-        let text: Utf8Bytes = json!({"type": "config", "codec": codec}).to_string().into();
-        *self.config.lock().unwrap() = Some(text.clone());
-        let _ = self.tx.send(CamEvent::Config(text));
+    fn error(&self, msg: &str) {
+        self.available.store(false, Ordering::Relaxed);
+        *self.last_error.lock().unwrap() = Some(msg.to_string());
     }
 }
 
@@ -81,7 +83,6 @@ pub async fn run(hub: Arc<CameraHub>, cfg: Arc<Config>) {
             hub.wake.notified().await;
         }
         let Some(url) = cfg.rtsp_url() else {
-            hub.available.store(false, Ordering::Relaxed);
             hub.error("no camera URL: access code unknown");
             tokio::time::sleep(Duration::from_secs(5)).await;
             continue;
@@ -95,7 +96,6 @@ pub async fn run(hub: Arc<CameraHub>, cfg: Arc<Config>) {
             }
             Err(e) => {
                 warn!("camera: {e}");
-                hub.available.store(false, Ordering::Relaxed);
                 hub.error(&e);
             }
         }
@@ -160,6 +160,7 @@ async fn session(hub: &CameraHub, url: &str) -> Result<(), String> {
     }
     info!(codec_hint = ?track.sprop.first().and_then(|s| h264::codec_string(s)), "camera stream started");
     hub.available.store(true, Ordering::Relaxed);
+    *hub.last_error.lock().unwrap() = None;
 
     let mut asm = Assembler::new();
     let mut clock = Clock::new(track.clock_rate);
@@ -225,68 +226,64 @@ fn emit(hub: &CameraHub, clock: &mut Clock, out: &mut Vec<Output>) {
         match o {
             Output::Config(codec) => {
                 info!(%codec, "camera codec");
-                hub.set_codec(&codec);
+                *hub.codec.lock().unwrap() = Some(codec);
             }
             Output::Frame {
                 key,
                 timestamp,
                 data,
             } => {
-                let us = clock.micros(timestamp);
-                let mut buf = Vec::with_capacity(9 + data.len());
-                buf.push(key as u8);
-                buf.extend_from_slice(&us.to_be_bytes());
-                buf.extend_from_slice(&data);
-                let _ = hub.tx.send(CamEvent::Frame {
+                let _ = hub.tx.send(Frame {
                     key,
-                    data: buf.into(),
+                    us: clock.micros(timestamp),
+                    data: data.into(),
                 });
             }
         }
     }
 }
 
-pub async fn ws_handler(ws: WebSocketUpgrade, State(app): State<Arc<App>>) -> Response {
-    ws.max_message_size(64 * 1024)
-        .on_upgrade(move |s| ws_client(s, app.camera.clone()))
+fn whep_error(status: StatusCode, msg: impl Into<String>) -> Response {
+    crate::files::ApiError::new(status, msg).into_response()
 }
 
-async fn ws_client(mut ws: WebSocket, hub: Arc<CameraHub>) {
-    let mut rx = hub.tx.subscribe();
-    hub.wake.notify_one();
-    let cfg = hub.config.lock().unwrap().clone();
-    if let Some(cfg) = cfg
-        && ws.send(Message::Text(cfg)).await.is_err()
-    {
-        return;
-    }
-    let mut waiting_key = true;
-    loop {
-        tokio::select! {
-            ev = rx.recv() => {
-                let msg = match ev {
-                    Ok(CamEvent::Config(t)) | Ok(CamEvent::Error(t)) => Message::Text(t),
-                    Ok(CamEvent::Frame { key, data }) => {
-                        if waiting_key && !key {
-                            continue;
-                        }
-                        waiting_key = false;
-                        Message::Binary(data)
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        waiting_key = true;
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => return,
-                };
-                if ws.send(msg).await.is_err() {
-                    return;
-                }
-            }
-            m = ws.recv() => match m {
-                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
-                Some(Ok(_)) => {}
-            },
+/// `POST /api/camera/whep`: WHEP (RFC 9725) offer -> answer.
+pub async fn whep_offer(State(app): State<Arc<App>>, body: String) -> Response {
+    // Accepted even while the camera is failing: the viewer's subscription
+    // is what keeps the upstream retrying (see /api/info camera_error).
+    match app.webrtc.offer(body).await {
+        Ok((id, answer)) => (
+            StatusCode::CREATED,
+            [
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/sdp"),
+                ),
+                (
+                    header::LOCATION,
+                    HeaderValue::from_str(&format!("/api/camera/whep/{id}"))
+                        .expect("ascii location"),
+                ),
+            ],
+            answer,
+        )
+            .into_response(),
+        Err(webrtc::OfferError::BadOffer(e)) => {
+            debug!("webrtc offer rejected: {e}");
+            whep_error(StatusCode::BAD_REQUEST, e)
+        }
+        Err(webrtc::OfferError::Busy) => {
+            whep_error(StatusCode::SERVICE_UNAVAILABLE, "too many WebRTC viewers")
+        }
+        Err(webrtc::OfferError::Internal(e)) => {
+            warn!("webrtc: {e}");
+            whep_error(StatusCode::SERVICE_UNAVAILABLE, e)
         }
     }
+}
+
+/// `DELETE /api/camera/whep/{id}`: end a WHEP session.
+pub async fn whep_delete(State(app): State<Arc<App>>, Path(id): Path<u64>) -> StatusCode {
+    app.webrtc.close(id).await;
+    StatusCode::OK
 }

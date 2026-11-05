@@ -1,92 +1,140 @@
-// Live camera: orcax1d forwards raw H.264 access units over a websocket
-// (docs/API.md), decoded here with WebCodecs. No transcoding on the printer.
+// Live camera over WebRTC (WHEP, docs/API.md). orcax1d passes the printer's
+// H.264 stream through untouched; the browser does jitter buffering, loss
+// recovery and (hardware) decoding into a <video>. Needs a UDP route to the
+// printer (port 8443 by default).
 import { useEffect, useRef, useState } from 'preact/hooks'
 
+/** Treat the feed as stalled when no frame has arrived for this long. */
+const STALL_MS = 3000
+const RETRY_MS = 3000
+
 export function Camera() {
-  const canvas = useRef<HTMLCanvasElement>(null)
+  const video = useRef<HTMLVideoElement>(null)
   const [state, setState] = useState('connecting…')
   const [fps, setFps] = useState(0)
 
   useEffect(() => {
-    if (typeof VideoDecoder === 'undefined') {
-      setState('This browser has no WebCodecs support (needs a secure context, e.g. HTTPS)')
+    if (typeof RTCPeerConnection === 'undefined') {
+      setState('This browser has no WebRTC support')
       return
     }
     let closed = false
-    let ws: WebSocket | null = null
-    let decoder: VideoDecoder | null = null
-    let codec: string | null = null
-    let frames = 0
+    let pc: RTCPeerConnection | null = null
+    let session: string | null = null
     let retry: ReturnType<typeof setTimeout> | null = null
-    const fpsTimer = setInterval(() => { setFps(frames); frames = 0 }, 1000)
+    let frames = 0
+    let lastFrame = 0
+    let ticks = 0
 
-    const makeDecoder = () => {
-      decoder?.close()
-      decoder = new VideoDecoder({
-        output: (frame) => {
-          const c = canvas.current
-          if (c) {
-            if (c.width !== frame.displayWidth) c.width = frame.displayWidth
-            if (c.height !== frame.displayHeight) c.height = frame.displayHeight
-            c.getContext('2d')!.drawImage(frame, 0, 0)
-          }
-          frame.close()
-          frames++
-        },
-        error: (e) => { setState(`decoder error: ${e.message}`); waitingKey = true; if (codec) makeDecoder() },
-      })
-      // Annex-B input: no "description", SPS/PPS come in-band with each keyframe.
-      decoder.configure({ codec: codec!, optimizeForLatency: true, hardwareAcceleration: 'no-preference' })
+    const v = video.current!
+    const hasFrameCallback = typeof v.requestVideoFrameCallback === 'function'
+    const onFrame = () => {
+      if (closed) return
+      frames++
+      lastFrame = performance.now()
+      v.requestVideoFrameCallback(onFrame)
     }
-    let waitingKey = true
+    if (hasFrameCallback) v.requestVideoFrameCallback(onFrame)
+    else v.onplaying = () => { lastFrame = performance.now() }
 
-    const connect = () => {
-      const url = new URL('api/camera', document.baseURI)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      ws = new WebSocket(url)
-      ws.binaryType = 'arraybuffer'
-      ws.onopen = () => setState('waiting for video…')
-      ws.onmessage = (ev) => {
-        if (typeof ev.data === 'string') {
-          const msg = JSON.parse(ev.data)
-          if (msg.type === 'config' && msg.codec !== codec) {
-            codec = msg.codec
-            waitingKey = true
-            makeDecoder()
-          } else if (msg.type === 'error') setState(msg.message)
-          return
+    // While no video arrives, ask the daemon why (camera_error).
+    const showUpstreamError = async () => {
+      try {
+        const info = await (await fetch(new URL('api/info', document.baseURI))).json()
+        if (!closed && info.camera_error) setState(`camera: ${info.camera_error}`)
+      } catch { /* daemon unreachable: the connection state will say so */ }
+    }
+
+    const timer = setInterval(() => {
+      setFps(frames)
+      frames = 0
+      ticks++
+      const flowing = hasFrameCallback ? performance.now() - lastFrame < STALL_MS : lastFrame > 0
+      if (flowing) { setState(''); return }
+      if (pc?.connectionState === 'connected') setState((s) => s.startsWith('camera:') ? s : 'waiting for video…')
+      if (ticks % 3 === 0) showUpstreamError()
+    }, 1000)
+
+    const teardown = () => {
+      if (session) {
+        // Best effort; the daemon also drops peers whose ICE checks stop.
+        fetch(new URL(session, document.baseURI), { method: 'DELETE', keepalive: true }).catch(() => {})
+        session = null
+      }
+      pc?.close()
+      pc = null
+    }
+
+    const reconnect = (why: string) => {
+      if (closed) return
+      teardown()
+      setState(`${why}, retrying…`)
+      if (retry) clearTimeout(retry)
+      retry = setTimeout(connect, RETRY_MS)
+    }
+
+    const connect = async () => {
+      if (closed) return
+      const conn = new RTCPeerConnection()
+      pc = conn
+      const tr = conn.addTransceiver('video', { direction: 'recvonly' })
+      // Offer only H.264 (what the camera sends) plus RTX for retransmits.
+      const caps = RTCRtpReceiver.getCapabilities?.('video')
+      if (caps && tr.setCodecPreferences) {
+        const codecs = caps.codecs.filter((c) => /^video\/(h264|rtx)$/i.test(c.mimeType))
+        if (codecs.some((c) => /h264/i.test(c.mimeType))) tr.setCodecPreferences(codecs)
+      }
+      // Ask for minimal buffering: this is a live view, not a movie.
+      const rx = tr.receiver as RTCRtpReceiver & { jitterBufferTarget?: number | null, playoutDelayHint?: number }
+      try { rx.jitterBufferTarget = 0 } catch { /* unsupported */ }
+      try { rx.playoutDelayHint = 0 } catch { /* unsupported */ }
+
+      conn.ontrack = (e) => {
+        v.srcObject = e.streams[0] ?? new MediaStream([e.track])
+      }
+      conn.onconnectionstatechange = () => {
+        if (conn !== pc) return
+        if (conn.connectionState === 'connected') setState('waiting for video…')
+        else if (conn.connectionState === 'failed') reconnect('camera connection lost (is UDP 8443 on the printer reachable?)')
+      }
+
+      try {
+        setState('connecting…')
+        await conn.setLocalDescription(await conn.createOffer())
+        // The daemon is ICE-lite with host candidates in its answer, so
+        // there's no need to wait for our own candidate gathering.
+        const res = await fetch(new URL('api/camera/whep', document.baseURI), {
+          method: 'POST',
+          headers: { 'content-type': 'application/sdp' },
+          body: conn.localDescription!.sdp,
+        })
+        const body = await res.text()
+        if (res.status !== 201) {
+          let msg = body.trim()
+          try { msg = JSON.parse(body).error ?? msg } catch { /* plain text */ }
+          throw new Error(msg || `HTTP ${res.status}`)
         }
-        if (!decoder || decoder.state !== 'configured') return
-        const buf = new Uint8Array(ev.data)
-        const key = (buf[0] & 1) === 1
-        if (waitingKey && !key) return
-        waitingKey = false
-        const ts = Number(new DataView(buf.buffer, 1, 8).getBigUint64(0))
-        // Drop frames if the decoder falls behind instead of building latency.
-        if (decoder.decodeQueueSize > 8 && !key) return
-        decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: ts, data: buf.subarray(9) }))
-        setState('')
-      }
-      ws.onclose = () => {
-        if (closed) return
-        setState('camera disconnected, retrying…')
-        retry = setTimeout(connect, 3000)
+        if (conn !== pc) return
+        session = res.headers.get('location')
+        await conn.setRemoteDescription({ type: 'answer', sdp: body })
+      } catch (e) {
+        if (conn === pc) reconnect(`camera: ${e instanceof Error ? e.message : String(e)}`)
       }
     }
+
     connect()
     return () => {
       closed = true
-      clearInterval(fpsTimer)
+      clearInterval(timer)
       if (retry) clearTimeout(retry)
-      ws?.close()
-      try { decoder?.close() } catch { /* already closed */ }
+      teardown()
     }
   }, [])
 
   return (
     <div class="camera">
-      <canvas ref={canvas} />
-      {state ? <div class="overlay">{state}</div> : <div class="overlay">{fps} fps</div>}
+      <video ref={video} autoplay muted playsInline disablePictureInPicture />
+      <div class="overlay">{state || `${fps} fps`}</div>
     </div>
   )
 }

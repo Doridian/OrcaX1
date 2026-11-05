@@ -37,6 +37,7 @@ without a file extension fall back to `index.html`. `.wasm` is served as
   "serial": "00M00A000000000",   // null until known
   "mqtt_connected": true,
   "camera_available": true,           // false after the last upstream camera attempt failed
+  "camera_error": null,               // why the last upstream camera attempt failed, if it did
   "mode": "local",                    // "local" (on the printer) or "remote" (dev PC, --printer)
   "sd_dir": "/mnt/sdcard"             // remote mode: "ftps://<printer>:990/"
 }
@@ -74,25 +75,35 @@ Client → server:
 top-level key, e.g. `print`, `system`, `pushing`) has no `sequence_id`, the
 daemon fills one in.
 
-## `GET /api/camera`: live camera (WebSocket)
+## Live camera
 
 The daemon pulls the printer's RTSPS stream
 (`rtsps://bblp:<code>@127.0.0.1:322/streaming/live/1`), depacketizes the
-H.264 RTP stream, and forwards access units. It does not transcode. It keeps
-one upstream RTSP session while at least one client is connected, and closes it
-when the last one leaves.
+H.264 RTP stream, and forwards access units to WebRTC viewers. It does not
+transcode. It keeps one upstream RTSP session while at least one viewer is
+connected, and closes it 5 s after the last one leaves. Upstream failures are
+retried with backoff while viewers stay connected; the reason is reported as
+`camera_error` in `/api/info`.
 
-* First a text frame: `{"type":"config","codec":"avc1.PPCCLL"}`, with the
-  codec string built from the SPS profile, constraint and level bytes. It is
-  sent again if the SPS changes.
-* Then binary frames, one per access unit:
-  * byte 0: flags, bit 0 = keyframe (IDR)
-  * bytes 1..9: u64 big-endian timestamp in microseconds (from the RTP clock)
-  * rest: Annex-B access unit (`00 00 00 01` start codes). Keyframes are
-    always prefixed with the current SPS and PPS.
-* A new client receives nothing until the next keyframe.
-* `{"type":"error","message":"…"}` text frames report upstream problems. The
-  daemon retries, and the socket stays open.
+### `POST /api/camera/whep`: WebRTC (WHEP, RFC 9725)
+
+Body: an SDP offer (`application/sdp`) with a `recvonly` video m-line
+offering H.264 with `packetization-mode=1`. Response `201 Created` with the
+SDP answer and `Location: /api/camera/whep/<id>`. `DELETE` that location to
+end the session; the daemon also drops a viewer whose ICE checks stop.
+
+* The daemon is an ICE-lite peer. Its answer carries host candidates only:
+  one UDP socket per local address, all on `--webrtc-port` (default 8443).
+  No STUN/TURN, so the browser must be able to reach one of the printer's
+  addresses over UDP.
+* The answer picks the H.264 payload type matching the camera's profile when
+  the offer has one. Media starts at the next keyframe after DTLS completes.
+  The browser's NACKs are answered from the send buffer (RTX); keyframe
+  requests (PLI/FIR) are ignored, since the camera's GOP can't be forced.
+* Offers are accepted while the camera is failing, so the viewer's session
+  keeps the upstream retrying; video starts once the camera recovers.
+* Errors (JSON `{"error":"…"}`): 400 for an unusable offer, 503 when 8
+  viewers are already connected or no UDP socket could be bound.
 
 ## Files on the SD card
 

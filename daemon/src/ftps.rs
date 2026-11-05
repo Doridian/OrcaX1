@@ -205,7 +205,10 @@ impl FtpsStore {
             // The printer's vsftpd answers a wrong password with a plaintext
             // reply on the TLS stream, which surfaces as a TLS decode error.
             let r = ctrl.cmd(&format!("PASS {code}")).await.map_err(|_| {
-                bad_gateway("login failed (connection broken after PASS); check the access code".to_string())
+                bad_gateway(
+                    "login failed (connection broken after PASS); check the access code"
+                        .to_string(),
+                )
             })?;
             if r.code != 230 {
                 return Err(bad_gateway(format!(
