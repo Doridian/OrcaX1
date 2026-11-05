@@ -1,0 +1,90 @@
+#!/usr/bin/env node
+// Headless check of the engine + profile bundle: slices a 20 mm cube with an
+// X1C profile and exports a printable .gcode.3mf.
+// Usage: node scripts/engine-smoke.mjs [out.gcode.3mf]
+import { readFileSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const ENGINE = join(ROOT, 'web/public/engine')
+globalThis.require ??= createRequire(import.meta.url)
+globalThis.__dirname ??= '.'
+globalThis.__filename ??= ''
+
+const bundle = JSON.parse(readFileSync(join(ROOT, 'web/public/profiles/bbl-x1.json'), 'utf8'))
+const printer = bundle.printers.find((p) => p.name === 'Bambu Lab X1 Carbon 0.4 nozzle')
+const proc = bundle.processes.find((p) => p.name === '0.20mm Standard @BBL X1C')
+const fil = bundle.filaments.find((p) => p.name === 'Bambu PLA Basic @BBL X1C')
+
+function cube(s) {
+  const v = [[0, 0, 0], [s, 0, 0], [s, s, 0], [0, s, 0], [0, 0, s], [s, 0, s], [s, s, s], [0, s, s]]
+  const f = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]]
+  const buf = new DataView(new ArrayBuffer(84 + f.length * 50))
+  buf.setUint32(80, f.length, true)
+  let o = 84
+  for (const t of f) {
+    o += 12
+    for (const i of t) for (const c of v[i]) { buf.setFloat32(o, c, true); o += 4 }
+    o += 2
+  }
+  return new Uint8Array(buf.buffer)
+}
+
+const jsText = readFileSync(join(ENGINE, 'slicer-mt.js'), 'utf8')
+const { default: artifact } = await import('data:text/javascript;charset=utf-8,' +
+  encodeURIComponent(`${jsText}\nexport default OneSlicerEngine;`))
+const engine = await artifact.createEngine({
+  runtime: {
+    wasmBinary: readFileSync(join(ENGINE, 'slicer-mt.wasm')),
+    mainScriptUrlOrBlob: join(ENGINE, 'slicer-mt.js'),
+    printErr: (m) => console.warn('[engine]', m),
+  },
+})
+const session = await engine.createSession()
+const enc = (o) => new TextEncoder().encode(JSON.stringify(o))
+
+let t = Date.now()
+await session.init(enc({ bed_size_x: 256, bed_size_y: 256 }))
+await session.applyProfile('orca.profile-json', enc(printer.settings))
+await session.applyProfile('orca.profile-json', enc(proc.settings))
+const filFrag = {}
+for (const [k, v] of Object.entries(fil.settings)) filFrag[k] = Array.isArray(v) ? v : [v]
+await session.applyProfile('orca.profile-json', enc(filFrag))
+await session.applyProfile('orca.native-json', enc({
+  curr_bed_type: 'Textured PEI Plate',
+  printer_settings_id: printer.name,
+  print_settings_id: proc.name,
+  filament_settings_id: [fil.name],
+  filament_ids: [fil.filament_id],
+  filament_colour: ['#FF8800'],
+}))
+console.log('profiles applied', Date.now() - t, 'ms')
+
+const stl = cube(20)
+await session.setObjects(stl, {
+  schemaVersion: '0.7.0',
+  plates: [{ id: 'plate-0', index: 0 }],
+  meshes: [{ id: 'm0', format: 'stl', dataRange: { offset: 0, length: stl.length } }],
+  objects: [{ id: 'o0', meshId: 'm0', extruderId: 0, name: 'cube' }],
+  instances: [{ id: 'i0', objectId: 'o0', plateId: 'plate-0', transform: { matrix: [1, 0, 0, 118, 0, 1, 0, 118, 0, 0, 1, 0, 0, 0, 0, 1] } }],
+  modifierVolumes: [],
+})
+t = Date.now()
+const result = await session.slice({ schemaVersion: '0.7.0', plateSelection: 'all', includeGcode: true, includeStatistics: true },
+  { onProgress: (p) => process.stdout.write(`\r${p.percent ?? '?'}% ${p.stage}          `) })
+console.log('\nsliced in', Date.now() - t, 'ms')
+console.log(JSON.stringify(result, null, 1).slice(0, 2500))
+const plate = result.plateResults[0]
+const gcodeAsset = plate.assets.find((a) => a.kind === 'gcode')
+const gcode = new TextDecoder().decode(await session.getAsset(gcodeAsset.id))
+console.log('gcode bytes', gcode.length)
+console.log(gcode.split('\n').filter((l) => l.startsWith('; ')).slice(0, 30).join('\n'))
+const exp = await session.export('project.3mf', { schemaVersion: '0.7.0', preservation: 'best-effort', includeSliceArtifacts: true })
+console.log('export', JSON.stringify(exp))
+const bytes = await session.getAsset(exp.asset.id)
+const out = process.argv[2] ?? join(ROOT, 'build/smoke.gcode.3mf')
+writeFileSync(out, bytes)
+console.log('wrote', out, bytes.length)
+process.exit(0)

@@ -1,0 +1,10 @@
+/target
+/daemon/target
+/web/node_modules
+/web/dist
+/web/public/engine/
+/web/public/profiles/
+/build/
+/dist/
+*.pem
+/.playwright-mcp/
