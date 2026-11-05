@@ -8,8 +8,9 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "orcax1d", version, about)]
 pub struct Config {
-    /// Main listen address (HTTPS unless --no-tls).
-    #[arg(long, env = "ORCAX1D_LISTEN", default_value = "0.0.0.0:8443")]
+    /// Main listen address (HTTPS unless --no-tls). Port 443 needs root
+    /// (the printer's init script runs the daemon as root).
+    #[arg(long, env = "ORCAX1D_LISTEN", default_value = "0.0.0.0:443")]
     pub listen: SocketAddr,
 
     /// Plain-HTTP listener that 301-redirects to the HTTPS listener.
@@ -101,6 +102,25 @@ pub struct Config {
     /// (0: random per address).
     #[arg(long, env = "ORCAX1D_WEBRTC_PORT", default_value_t = 8443)]
     pub webrtc_port: u16,
+
+    /// Login methods, comma-separated: `access-code` (the printer's LAN
+    /// access code), or `none` to disable authentication.
+    #[arg(
+        long,
+        env = "ORCAX1D_AUTH",
+        value_delimiter = ',',
+        default_value = "access-code"
+    )]
+    pub auth: Vec<String>,
+
+    /// How long a login lasts, in days.
+    #[arg(long, env = "ORCAX1D_SESSION_DAYS", default_value_t = 30)]
+    pub session_days: u32,
+
+    /// Extra PEM CA certificates to trust for ACME and DNS provider APIs
+    /// (e.g. a private step-ca), on top of the bundled Mozilla roots.
+    #[arg(long, env = "ORCAX1D_ACME_CA_FILE")]
+    pub acme_ca_file: Option<PathBuf>,
 
     /// Camera URL (default: rtsps://bblp:<access code>@<mqtt host>:322/streaming/live/1).
     #[arg(long, env = "ORCAX1D_RTSP_URL", hide_env_values = true)]

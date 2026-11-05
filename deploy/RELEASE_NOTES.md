@@ -9,6 +9,6 @@ Needs a Bambu Lab X1 / X1C / X1E running [X1Plus](https://github.com/X1Plus/X1Pl
    ```sh
    sh /mnt/sdcard/orcax1/install.sh
    ```
-3. Open the `https://<printer-ip>:8443/` address it prints and accept the certificate warning.
+3. Open the `https://<printer-ip>/` address it prints and accept the certificate warning.
 
 To upgrade, unpack a newer zip over the old one and run `install.sh` again. To remove: `sh /mnt/sdcard/orcax1/install.sh uninstall`.

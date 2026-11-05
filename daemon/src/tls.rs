@@ -88,7 +88,7 @@ fn err<E: std::fmt::Display>(e: E) -> io::Error {
     io::Error::other(e.to_string())
 }
 
-fn certified_key(
+pub fn certified_key(
     chain: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
 ) -> io::Result<Arc<CertifiedKey>> {
@@ -96,12 +96,53 @@ fn certified_key(
     Ok(Arc::new(CertifiedKey::new(chain, signer)))
 }
 
-#[derive(Debug)]
-struct Resolver(RwLock<Arc<CertifiedKey>>);
+/// Parses a PEM certificate chain and private key.
+pub fn certified_key_from_pem(chain_pem: &[u8], key_pem: &[u8]) -> io::Result<Arc<CertifiedKey>> {
+    let chain = CertificateDer::pem_slice_iter(chain_pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    if chain.is_empty() {
+        return Err(err("no certificate in PEM"));
+    }
+    let key = PrivateKeyDer::from_pem_slice(key_pem).map_err(err)?;
+    certified_key(chain, key)
+}
 
-impl ResolvesServerCert for Resolver {
-    fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        Some(self.0.read().unwrap().clone())
+/// Picks the certificate per connection: an ACME certificate when the
+/// client's SNI matches one of its names, else the default (self-signed or
+/// --tls-cert) one, which also covers access by IP address.
+#[derive(Debug)]
+pub struct CertResolver {
+    default: RwLock<Arc<CertifiedKey>>,
+    acme: RwLock<Option<(Vec<String>, Arc<CertifiedKey>)>>,
+}
+
+/// Whether `name` is covered by `pattern` (exact, or `*.` matching one label).
+pub fn name_matches(pattern: &str, name: &str) -> bool {
+    let name = name.trim_end_matches('.');
+    match pattern.strip_prefix("*.") {
+        Some(base) => name
+            .split_once('.')
+            .is_some_and(|(label, rest)| !label.is_empty() && rest.eq_ignore_ascii_case(base)),
+        None => pattern.eq_ignore_ascii_case(name),
+    }
+}
+
+impl CertResolver {
+    pub fn set_acme(&self, cert: Option<(Vec<String>, Arc<CertifiedKey>)>) {
+        *self.acme.write().unwrap() = cert;
+    }
+}
+
+impl ResolvesServerCert for CertResolver {
+    fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        if let Some(sni) = hello.server_name()
+            && let Some((names, ck)) = &*self.acme.read().unwrap()
+            && names.iter().any(|p| name_matches(p, sni))
+        {
+            return Some(ck.clone());
+        }
+        Some(self.default.read().unwrap().clone())
     }
 }
 
@@ -109,6 +150,7 @@ pub struct ServerTls {
     pub config: Arc<ServerConfig>,
     /// DER of the generated local CA, if we generated the certificate.
     pub ca_der: Option<Vec<u8>>,
+    pub resolver: Arc<CertResolver>,
 }
 
 pub fn server_config(
@@ -133,15 +175,19 @@ pub fn server_config(
             (ck, Some(ca), Some(store))
         }
     };
-    let resolver = Arc::new(Resolver(RwLock::new(ck)));
+    let resolver = Arc::new(CertResolver {
+        default: RwLock::new(ck),
+        acme: RwLock::new(None),
+    });
     let mut config = ServerConfig::builder()
         .with_no_client_auth()
-        .with_cert_resolver(resolver.clone());
+        .with_cert_resolver(resolver.clone() as Arc<dyn ResolvesServerCert>);
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
     if let Some(store) = refresh {
         // Network addresses come and go (DHCP, WiFi coming up after us):
         // re-issue the leaf when the SAN set changes.
+        let resolver = resolver.clone();
         tokio::spawn(async move {
             let mut iv = tokio::time::interval(Duration::from_secs(60));
             iv.tick().await;
@@ -149,7 +195,7 @@ pub fn server_config(
                 iv.tick().await;
                 let store = &store;
                 match tokio::task::block_in_place(|| store.load_or_issue_if_changed()) {
-                    Ok(Some(ck)) => *resolver.0.write().unwrap() = ck,
+                    Ok(Some(ck)) => *resolver.default.write().unwrap() = ck,
                     Ok(None) => {}
                     Err(e) => warn!("certificate refresh failed: {e}"),
                 }
@@ -159,6 +205,7 @@ pub fn server_config(
     Ok(ServerTls {
         config: Arc::new(config),
         ca_der,
+        resolver,
     })
 }
 

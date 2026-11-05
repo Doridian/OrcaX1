@@ -3,7 +3,7 @@
 `orcax1d` is a single static ARMv7 binary (`dist/orcax1d-armv7`, about 6 MB)
 that runs on the printer's application processor under
 [X1Plus](https://github.com/X1Plus/X1Plus). It serves the web UI over HTTPS
-on port **8443** and redirects plain HTTP on port **8080** to it. The WebRTC
+on port **443** and redirects plain HTTP on port **8080** to it. The WebRTC
 camera uses **UDP 8443** (`ORCAX1D_WEBRTC_PORT`). None of these ports is
 used by Bambu's firmware (MQTT 8883, RTSPS 322, FTPS 990, ...) or by
 X1Plus (its own HTTP server is on port 80).
@@ -16,7 +16,7 @@ X1Plus (its own HTTP server is on port 80).
 /mnt/sdcard/orcax1/www/           the web UI (contents of web/dist)
 /mnt/sdcard/orcax1/install.sh     installs/upgrades/uninstalls (run over SSH)
 /mnt/sdcard/orcax1/S99orcax1d     init script (install.sh copies it to /etc/init.d)
-/mnt/sdcard/orcax1/state/         generated TLS CA + certificate
+/mnt/sdcard/orcax1/state/         generated TLS CA + certificate, login sessions, ACME account/certificate
 /mnt/sdcard/orcax1/orcax1d.conf   optional ORCAX1D_* overrides (shell syntax)
 /etc/init.d/S99orcax1d            init script (persists in X1Plus's overlay)
 /tmp/orcax1d.log                  log (previous run: /tmp/orcax1d.log.old)
@@ -70,6 +70,14 @@ access code from `/config/device/access_token`, serial from `bbl_3dpsn`, SD
 card at `/mnt/sdcard`). Upgrading is just replacing the files on the SD card
 and restarting.
 
+## Logging in
+
+The UI asks for the printer's **LAN access code** (printer screen → Settings
+→ Network), the same code that protects the printer's MQTT, camera and FTPS
+services. A login lasts 30 days (`ORCAX1D_SESSION_DAYS`) and ends early if
+the access code is changed on the printer. `ORCAX1D_AUTH=none` disables
+login (only do that on a network you fully trust).
+
 ## The certificate warning
 
 The browser needs a secure context (HTTPS) for the slicer's
@@ -79,16 +87,24 @@ addresses in `state/` (re-issued automatically if the IP changes).
 
 Either:
 
-* **Accept the warning once.** Open `https://<printer-ip>:8443/`, then
+* **Accept the warning once.** Open `https://<printer-ip>/`, then
   "Advanced" → "Proceed" (Chrome/Edge) or "Accept the Risk and Continue"
   (Firefox). Safari: "Show Details" → "visit this website".
 * **Or trust the CA** to get a clean padlock that survives IP changes:
-  download `https://<printer-ip>:8443/api/ca.crt` and import it as a trusted
+  download `https://<printer-ip>/api/ca.crt` and import it as a trusted
   root (Windows: double-click → Install → "Trusted Root Certification
   Authorities"; macOS: Keychain Access → System → set to "Always Trust";
   Firefox: Settings → Certificates → Authorities → Import; Android/iOS: install
   as a CA profile). The CA is unique to your printer; delete `state/` to
   regenerate it.
+
+* **Or get a real certificate** from Let's Encrypt (or another ACME CA) under
+  Settings → HTTPS certificate, using a domain you control. Validation is
+  by DNS TXT record (DNS-01) through Cloudflare, an RFC 2136 server (BIND,
+  Knot, PowerDNS, … with a TSIG key) or acme-dns, so the printer stays off
+  the internet. Point the name at the printer's LAN IP in your DNS and open
+  `https://<name>/`. The certificate renews itself; opening the printer by
+  IP still uses the self-signed one.
 
 To use your own certificate instead, set `ORCAX1D_TLS_CERT` and
 `ORCAX1D_TLS_KEY` in `orcax1d.conf`.
@@ -100,8 +116,8 @@ mode, so you don't have to deploy to the printer on every change:
 
 ```sh
 cd daemon
-cargo run -- --printer 192.168.1.50 --access-code 12345678 --no-tls --web-root ../web/dist
-# or: ORCAX1_PRINTER=192.168.1.50 ORCAX1_ACCESS_CODE=12345678 cargo run -- --no-tls --web-root ../web/dist
+cargo run -- --printer 192.168.1.50 --access-code 12345678 --no-tls --listen 127.0.0.1:8443 --state-dir ./state --web-root ../web/dist
+# or: ORCAX1_PRINTER=192.168.1.50 ORCAX1_ACCESS_CODE=12345678 cargo run -- --no-tls --listen 127.0.0.1:8443 --state-dir ./state --web-root ../web/dist
 ```
 
 In remote mode MQTT goes to `<printer>:8883`, the camera to
@@ -127,6 +143,12 @@ cd web && npm run dev      # or: ORCAX1_DAEMON=http://other-host:8443 npm run de
 Drop `--no-tls` to test HTTPS from other devices; the certificate then lives
 in `--state-dir` (default `/mnt/sdcard/orcax1/state`, so pass e.g.
 `--state-dir ./state` on a PC).
+
+## Port 443
+
+The daemon runs as root from the init script, so it binds 443 directly (no
+`setcap` needed). To use another port, set `ORCAX1D_LISTEN` in
+`orcax1d.conf`, e.g. `ORCAX1D_LISTEN=0.0.0.0:8443`.
 
 ## Options
 

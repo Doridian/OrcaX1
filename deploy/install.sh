@@ -54,5 +54,6 @@ echo
 [ -f "$BASE/VERSION" ] && echo "OrcaX1 $(cat "$BASE/VERSION") is running. Open:"
 [ -f "$BASE/VERSION" ] || echo "OrcaX1 is running. Open:"
 ip -4 addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | grep -v '^127\.' |
-	while read -r ip; do echo "  https://$ip:8443/"; done
-echo "and accept the certificate warning (see the README for trusting the CA instead)."
+	while read -r ip; do echo "  https://$ip/"; done
+echo "sign in with the LAN access code, and accept the certificate warning"
+echo "(or get a trusted certificate under Settings; see the README)."
