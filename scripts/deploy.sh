@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Installs orcax1d, the web UI and the init script on an X1Plus printer over
-# root SSH, then (re)starts the service.
+# Copies a local build (orcax1d, the web UI, the init script and install.sh)
+# to an X1Plus printer's SD card over root SSH, then runs install.sh there.
+# For end users, the release zip + install.sh does the same without a build.
 #
 #   scripts/deploy.sh <printer-ip>
 #
@@ -28,11 +29,11 @@ echo "==> binary"
 
 echo "==> web UI"
 tar -C "$WEB" -cf - . | "${SSH[@]}" "rm -rf $BASE/www.new && mkdir -p $BASE/www.new && tar -xf - -C $BASE/www.new && rm -rf $BASE/www && mv $BASE/www.new $BASE/www"
+(cd "$WEB" && find . -type f | sort) | "${SSH[@]}" "cat > $BASE/www.manifest"
+git -C "$ROOT" describe --tags --always --dirty | "${SSH[@]}" "cat > $BASE/VERSION"
 
-echo "==> init script"
-"${SSH[@]}" "cat > /etc/init.d/S99orcax1d && chmod 755 /etc/init.d/S99orcax1d" < "$ROOT/deploy/S99orcax1d"
+echo "==> init script + install"
+"${SSH[@]}" "cat > $BASE/S99orcax1d" < "$ROOT/deploy/S99orcax1d"
+"${SSH[@]}" "cat > $BASE/install.sh" < "$ROOT/deploy/install.sh"
+"${SSH[@]}" "sh $BASE/install.sh"
 
-echo "==> restart"
-"${SSH[@]}" "/etc/init.d/S99orcax1d restart; sleep 2; tail -n 5 /tmp/orcax1d.log"
-
-echo "done: https://$1:8443/"

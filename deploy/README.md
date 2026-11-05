@@ -14,37 +14,48 @@ X1Plus (its own HTTP server is on port 80).
 /mnt/sdcard/orcax1/orcax1d        the binary (copied to /userdata/bin at start: the SD card is mounted noexec-style)
 /userdata/bin/orcax1d             the copy that runs (internal flash; refreshed only when it differs)
 /mnt/sdcard/orcax1/www/           the web UI (contents of web/dist)
+/mnt/sdcard/orcax1/install.sh     installs/upgrades/uninstalls (run over SSH)
+/mnt/sdcard/orcax1/S99orcax1d     init script (install.sh copies it to /etc/init.d)
 /mnt/sdcard/orcax1/state/         generated TLS CA + certificate
 /mnt/sdcard/orcax1/orcax1d.conf   optional ORCAX1D_* overrides (shell syntax)
 /etc/init.d/S99orcax1d            init script (persists in X1Plus's overlay)
 /tmp/orcax1d.log                  log (previous run: /tmp/orcax1d.log.old)
 ```
 
-## Build
+## Install from a release
+
+You need X1Plus with SSH enabled (root login).
+
+1. Download `orcax1-<version>.zip` from
+   [Releases](https://github.com/Doridian/OrcaX1/releases) and unpack it to
+   the root of the SD card, giving the `orcax1/` folder above. Either put the
+   card in a PC, or upload the unpacked `orcax1` folder with an FTP client:
+   FTPS with implicit TLS on port 990, user `bblp`, password = the LAN access
+   code (printer screen, Settings → Network).
+2. Over SSH:
+
+   ```sh
+   sh /mnt/sdcard/orcax1/install.sh
+   ```
+
+   This installs the init script into `/etc/init.d`, (re)starts the daemon,
+   checks that it stayed up (printing the log if not), and prints the URL.
+
+To upgrade, unpack a newer zip over the old folder and run `install.sh`
+again; it also deletes web files left over from the previous release (those
+not in `www.manifest`). To remove OrcaX1, run
+`sh /mnt/sdcard/orcax1/install.sh uninstall`, then delete the folder.
+
+## Install from a local build
 
 ```sh
-scripts/build-daemon.sh        # cross-builds in podman/docker -> dist/orcax1d-armv7
-(cd web && npm ci && npm run build)   # -> web/dist
-```
-
-## Install
-
-With SSH enabled in X1Plus (root login):
-
-```sh
+scripts/build-all.sh           # -> dist/orcax1d-armv7 + web/dist
 scripts/deploy.sh 192.168.1.50
 ```
 
-This copies the binary, `web/dist` and the init script, then restarts the
-service. To do it by hand, copy the files to the layout above (for example by
-putting the SD card in a PC: create `orcax1/`, copy `dist/orcax1d-armv7` to
-`orcax1/orcax1d` and `web/dist/*` to `orcax1/www/`), then on the printer:
-
-```sh
-cat > /etc/init.d/S99orcax1d    # paste deploy/S99orcax1d, or copy it over ssh
-chmod 755 /etc/init.d/S99orcax1d
-/etc/init.d/S99orcax1d start
-```
+`deploy.sh` copies the binary, `web/dist`, the init script and `install.sh`
+to the SD card over SSH and runs `install.sh`. `scripts/package.sh` builds
+the same zip CI attaches to releases (`dist/orcax1-<version>.zip`).
 
 ### Start at boot
 
