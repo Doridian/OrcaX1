@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds everything that goes onto the printer:
 #   dist/orcax1d-armv7   static daemon binary (cross-compiled in a container)
-#   web/dist/            the web UI, WASM engine and profiles (precompressed)
+#   web/dist/            the web UI, WASM engine and profiles (gzipped)
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

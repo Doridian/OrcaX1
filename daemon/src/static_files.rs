@@ -1,4 +1,4 @@
-//! Static web root: precompressed variants, MIME types, SPA fallback,
+//! Static web root: gzip-only assets, MIME types, SPA fallback,
 //! ETag / Last-Modified revalidation.
 
 use std::path::{Path, PathBuf};
@@ -51,47 +51,83 @@ pub fn mime_for(path: &Path) -> &'static str {
     }
 }
 
-/// Which precompressed encodings the client accepts (br, gzip).
-fn accepted(headers: &HeaderMap) -> (bool, bool) {
+/// Whether the client accepts gzip.
+fn accepts_gzip(headers: &HeaderMap) -> bool {
     let Some(v) = headers
         .get(header::ACCEPT_ENCODING)
         .and_then(|v| v.to_str().ok())
     else {
-        return (false, false);
+        return false;
     };
-    let mut br = false;
-    let mut gz = false;
-    for part in v.split(',') {
+    v.split(',').any(|part| {
         let mut it = part.split(';');
         let coding = it.next().unwrap_or("").trim().to_ascii_lowercase();
         let q_zero = it.any(|p| {
-            let p = p.trim();
-            p.strip_prefix("q=")
+            p.trim()
+                .strip_prefix("q=")
                 .and_then(|q| q.trim().parse::<f32>().ok())
                 == Some(0.0)
         });
-        if q_zero {
-            continue;
-        }
-        match coding.as_str() {
-            "br" => br = true,
-            "gzip" | "x-gzip" => gz = true,
-            "*" => {
-                br = true;
-                gz = true
-            }
-            _ => {}
-        }
-    }
-    (br, gz)
+        !q_zero && matches!(coding.as_str(), "gzip" | "x-gzip" | "*")
+    })
 }
 
 async fn file_meta(p: &Path) -> Option<std::fs::Metadata> {
     tokio::fs::metadata(p).await.ok().filter(|m| m.is_file())
 }
 
+fn gz_path(p: &Path) -> PathBuf {
+    let mut s = p.as_os_str().to_owned();
+    s.push(".gz");
+    PathBuf::from(s)
+}
+
+/// A web file as stored: plain, or only as `<file>.gz` (see
+/// scripts/precompress.mjs).
+async fn find(p: &Path) -> Option<(PathBuf, std::fs::Metadata, bool)> {
+    if let Some(m) = file_meta(p).await {
+        return Some((p.to_path_buf(), m, false));
+    }
+    let gz = gz_path(p);
+    let m = file_meta(&gz).await?;
+    Some((gz, m, true))
+}
+
 fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "not found\n").into_response()
+}
+
+/// Streams a gzip file decompressed, for clients without gzip support.
+/// Inflating runs on a blocking thread; chunks go through a small channel.
+fn gunzip_body(file: std::fs::File) -> Body {
+    let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<bytes::Bytes>>(4);
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut dec = flate2::read::MultiGzDecoder::new(std::io::BufReader::new(file));
+        loop {
+            let mut buf = vec![0u8; 64 * 1024];
+            match dec.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.truncate(n);
+                    if tx.blocking_send(Ok(buf.into())).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(e));
+                    break;
+                }
+            }
+        }
+    });
+    Body::from_stream(tokio_stream_from(rx))
+}
+
+fn tokio_stream_from<T: Send + 'static>(
+    mut rx: tokio::sync::mpsc::Receiver<T>,
+) -> impl futures_util::Stream<Item = T> + Send + 'static {
+    futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx))
 }
 
 pub async fn serve(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) -> Response {
@@ -102,15 +138,13 @@ pub async fn serve(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) ->
         return (StatusCode::BAD_REQUEST, "bad path\n").into_response();
     };
     let root = &app.cfg.web_root;
-    let index = root.join("index.html");
 
     let mut path: PathBuf = root.join(&rel);
-    let mut meta = tokio::fs::metadata(&path).await.ok();
-    if meta.as_ref().is_some_and(|m| m.is_dir()) {
+    if tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir()) {
         path = path.join("index.html");
-        meta = file_meta(&path).await;
     }
-    if !meta.as_ref().is_some_and(|m| m.is_file()) {
+    let mut found = find(&path).await;
+    if found.is_none() {
         // SPA fallback: extension-less paths get index.html.
         let has_ext = rel
             .file_name()
@@ -119,35 +153,17 @@ pub async fn serve(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) ->
         if has_ext {
             return not_found();
         }
-        path = index;
-        meta = file_meta(&path).await;
+        path = root.join("index.html");
+        found = find(&path).await;
     }
-    let Some(mut meta) = meta else {
+    let Some((serve_path, meta, gzipped)) = found else {
         return not_found();
     };
-    // The content type comes from the requested file, not a .br/.gz sibling.
+    // The content type comes from the requested name, not the .gz.
     let ctype = mime_for(&path);
     let is_html = ctype.starts_with("text/html");
     let immutable = rel.starts_with("assets");
-
-    let (br, gz) = accepted(&headers);
-    let mut encoding = None;
-    let mut serve_path = path.clone();
-    for (ok, ext, name) in [(br, "br", "br"), (gz, "gz", "gzip")] {
-        if !ok {
-            continue;
-        }
-        let mut p = path.clone().into_os_string();
-        p.push(".");
-        p.push(ext);
-        let p = PathBuf::from(p);
-        if let Some(m) = file_meta(&p).await {
-            serve_path = p;
-            meta = m;
-            encoding = Some(name);
-            break;
-        }
-    }
+    let send_gzip = gzipped && accepts_gzip(&headers);
 
     let mtime = meta.modified().unwrap_or(UNIX_EPOCH);
     let mtime_ns = mtime
@@ -158,7 +174,7 @@ pub async fn serve(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) ->
         "\"{:x}-{:x}{}\"",
         meta.len(),
         mtime_ns,
-        encoding.map(|e| format!("-{e}")).unwrap_or_default()
+        if send_gzip { "-gzip" } else { "" }
     );
     let last_modified = httpdate::fmt_http_date(mtime);
     let cache_control = if immutable && !is_html {
@@ -177,7 +193,9 @@ pub async fn serve(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) ->
         header::CACHE_CONTROL,
         HeaderValue::from_static(cache_control),
     );
-    h.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    if gzipped {
+        h.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    }
 
     if not_modified(&headers, &etag, mtime) {
         return (StatusCode::NOT_MODIFIED, h).into_response();
@@ -188,11 +206,16 @@ pub async fn serve(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) ->
         Err(_) => return not_found(),
     };
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ctype));
-    h.insert(header::CONTENT_LENGTH, HeaderValue::from(meta.len()));
-    if let Some(e) = encoding {
-        h.insert(header::CONTENT_ENCODING, HeaderValue::from_static(e));
-    }
-    let body = Body::from_stream(ReaderStream::with_capacity(file, 64 * 1024));
+    let body = if gzipped && !send_gzip {
+        // Length unknown up front: sent chunked.
+        gunzip_body(file.into_std().await)
+    } else {
+        h.insert(header::CONTENT_LENGTH, HeaderValue::from(meta.len()));
+        if send_gzip {
+            h.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        }
+        Body::from_stream(ReaderStream::with_capacity(file, 64 * 1024))
+    };
     (StatusCode::OK, h, body).into_response()
 }
 
@@ -242,15 +265,16 @@ mod tests {
     #[test]
     fn accept_encoding() {
         let mut h = HeaderMap::new();
+        assert!(!accepts_gzip(&h));
         h.insert(
             header::ACCEPT_ENCODING,
-            HeaderValue::from_static("gzip, deflate, br;q=0"),
+            HeaderValue::from_static("gzip, deflate, br"),
         );
-        assert_eq!(accepted(&h), (false, true));
+        assert!(accepts_gzip(&h));
         h.insert(
             header::ACCEPT_ENCODING,
-            HeaderValue::from_static("br, gzip;q=0.5"),
+            HeaderValue::from_static("br, gzip;q=0"),
         );
-        assert_eq!(accepted(&h), (true, true));
+        assert!(!accepts_gzip(&h));
     }
 }

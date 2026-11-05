@@ -14,7 +14,48 @@ Cross-Origin-Embedder-Policy: require-corp
 Cross-Origin-Resource-Policy: same-origin
 ```
 
-No authentication (for now).
+Everything under `/api/` needs a login except `/api/auth/*` and
+`/api/ca.crt`; without one it answers `401 {"error":"not logged in"}` (the
+WebSocket upgrade too). Static files are public, so the login page can load.
+`--auth none` turns authentication off.
+
+## Authentication
+
+Login methods are pluggable providers (`daemon/src/auth/`). The only one so
+far is `access-code`: the printer's LAN access code, the same secret that
+guards its MQTT, camera and FTPS. A successful login sets an HttpOnly,
+`SameSite=Strict` session cookie (`__Host-orcax1_session` over HTTPS,
+`orcax1_session` with `--no-tls`) valid for `--session-days` (default 30).
+Sessions survive daemon restarts (only their SHA-256 is stored, in
+`<state-dir>/sessions.json`) and stop working when the access code changes.
+A wrong code is answered after a 1 s delay.
+
+### `GET /api/auth/status`
+
+```json
+{
+  "enabled": true,                // false with --auth none
+  "authenticated": false,
+  "user": null,                   // {"provider":"access-code","name":"LAN access code","expires":1796514134}
+  "providers": [
+    {"id":"access-code","kind":"secret","label":"LAN access code","field":"Access code","hint":"…"}
+  ]
+}
+```
+
+`kind: "secret"` means a one-field form; its value is posted as `secret`.
+(A future redirect-based provider such as OIDC would use
+`{"kind":"redirect","url":…}` and its own callback route.)
+
+### `POST /api/auth/login`
+
+Body `{"provider":"access-code","secret":"12345678"}`. → `200` with the
+status object and `Set-Cookie`; `401` for a wrong code; `503` if the daemon
+can't read the access code.
+
+### `POST /api/auth/logout`
+
+Ends the session and clears the cookie. → the status object.
 
 Errors from `/api/*` endpoints are JSON: `{"error":"message"}` with a 4xx/5xx
 status (400 bad path, 404 not found, 409 conflict such as a non-empty
@@ -22,10 +63,13 @@ directory, 502 printer FTP failure in remote mode, 503 MQTT not connected).
 
 ## Static files
 
-`GET /<path>` serves files from the web root. If the client accepts `br` or
-`gzip` and `<path>.br` / `<path>.gz` exists, the daemon serves that file with
-`Content-Encoding` set and the original file's `Content-Type`. Unknown paths
-without a file extension fall back to `index.html`. `.wasm` is served as
+`GET /<path>` serves files from the web root. To save SD card space and
+writes, the build stores compressible assets only gzipped (`<path>.gz`, no
+uncompressed copy; see `scripts/precompress.mjs`). When only `<path>.gz`
+exists, clients that accept `gzip` get it as-is with `Content-Encoding: gzip`;
+others get it decompressed on the fly (chunked, no `Content-Length`). The
+`Content-Type` always comes from the requested name. Unknown paths without a
+file extension fall back to `index.html`. `.wasm` is served as
 `application/wasm`.
 
 ## `GET /api/info`
@@ -47,7 +91,69 @@ without a file extension fall back to `index.html`. `.wasm` is served as
 
 The local CA that signed the daemon's self-signed HTTPS certificate (DER,
 `application/x-x509-ca-cert`). Installing it as a trusted root removes the
-browser warning. 404 when `--tls-cert` is used or in `--no-tls` mode.
+browser warning. 404 when `--tls-cert` is used or in `--no-tls` mode. No
+login needed.
+
+## ACME certificates
+
+The daemon can get a certificate from Let's Encrypt or any ACME CA using the
+DNS-01 challenge, so the printer never has to be reachable from the
+internet. It is served when the client's SNI matches one of its names
+(exact, or `*.` for one label); connections by IP address or other names
+keep the self-signed (or `--tls-cert`) certificate. With `enabled`, the
+daemon checks hourly and requests a new certificate 30 days before expiry,
+or when the domains or CA change (after a failure it waits 6 h).
+
+DNS providers (`daemon/src/acme/dns/`): `cloudflare` (API token),
+`rfc2136` (dynamic update with a TSIG key; BIND, Knot, PowerDNS, …) and
+`acme-dns`. Each describes its settings form in `providers[].fields`.
+`--acme-ca-file` adds trusted roots for the CA and DNS APIs (e.g. a private
+step-ca); otherwise the bundled Mozilla roots are used.
+
+State lives in `<state-dir>/acme/`: `config.json` (including DNS
+credentials), `account.json`, `cert.pem`, `key.pem`, `cert.json`.
+
+### `GET /api/acme`
+
+```json
+{
+  "config": {
+    "enabled": true,
+    "directory": "https://acme-v02.api.letsencrypt.org/directory",
+    "email": "",
+    "domains": ["printer.example.com"],
+    "eab_kid": "", "eab_hmac": "",        // external account binding, for CAs that need it
+    "dns_provider": "cloudflare",
+    "dns": {"api_token": ""},             // provider settings; secrets blanked
+    "propagation_seconds": 30
+  },
+  "secrets_set": ["dns.api_token"],      // secrets that are saved but not returned
+  "providers": [{"id":"cloudflare","label":"Cloudflare","help":"…",
+                 "fields":[{"key":"api_token","label":"API token","secret":true,"required":true}, …]}, …],
+  "directories": [{"label":"Let's Encrypt","url":"…","eab":false}, …],
+  "tls": true,                           // false with --no-tls: a certificate is saved but not served
+  "cert": {"domains":[…],"directory":"…","issued_at":1793922439,"not_after":1801698438},   // or null
+  "status": {"running":false,"last_attempt":…,"last_success":…,"last_error":null,
+             "log":[[1793922437,"ordering a certificate for printer.example.com"], …]}
+}
+```
+
+### `PUT /api/acme`
+
+Body `{"config":{…},"issue":false}`. Empty secret fields keep their saved
+value (for the same provider). With `"issue":true` a request starts right
+away. → `200` with the view above; `400` for an invalid config.
+
+### `POST /api/acme/issue`
+
+Requests a certificate now with the saved config, in the background. → `202`
+with the view (poll `GET /api/acme` while `status.running`); `409` if one is
+already running.
+
+### `DELETE /api/acme/cert`
+
+Deletes the certificate, goes back to the default certificate, and turns
+off `enabled`. Does not revoke.
 
 ## `GET /api/ws`: printer state and commands (WebSocket, JSON text frames)
 

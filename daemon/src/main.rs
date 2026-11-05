@@ -1,12 +1,16 @@
+mod acme;
+mod auth;
 mod camera;
 mod config;
 mod files;
 mod ftps;
+mod http_client;
 mod mqtt;
 mod printer;
 mod static_files;
 mod store;
 mod tls;
+mod util;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -37,6 +41,8 @@ pub struct App {
     pub store: Arc<dyn store::FileStore>,
     /// Where the file API points: the SD dir, or ftps://<printer>/.
     pub store_desc: String,
+    pub auth: auth::Auth,
+    pub acme: Arc<acme::Acme>,
 }
 
 fn init_logging() {
@@ -141,7 +147,8 @@ async fn api_not_found() -> files::ApiError {
 }
 
 fn router(app: Arc<App>) -> Router {
-    Router::new()
+    // Everything here needs a login (when auth is enabled).
+    let protected = Router::new()
         .route("/api/info", get(info_handler))
         .route("/api/ws", get(printer::ws_handler))
         .route("/api/camera/whep", post(camera::whep_offer))
@@ -153,6 +160,18 @@ fn router(app: Arc<App>) -> Router {
             put(files::upload).layer(DefaultBodyLimit::disable()),
         )
         .route("/api/print", post(printer::print))
+        .route("/api/acme", get(acme::get).put(acme::put))
+        .route("/api/acme/issue", post(acme::issue))
+        .route("/api/acme/cert", delete(acme::delete_cert))
+        .route_layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            auth::require,
+        ));
+    Router::new()
+        .merge(protected)
+        .route("/api/auth/status", get(auth::status))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/logout", post(auth::logout))
         .route("/api/ca.crt", get(ca_handler))
         .route("/api", any(api_not_found))
         .route("/api/{*rest}", any(api_not_found))
@@ -211,8 +230,10 @@ async fn serve(listener: TcpListener, app: Router, tls: Option<tokio_rustls::Tls
         let app = app.clone();
         let tls = tls.clone();
         tokio::spawn(async move {
-            let svc = hyper::service::service_fn(move |req: Request<hyper::body::Incoming>| {
+            let svc = hyper::service::service_fn(move |mut req: Request<hyper::body::Incoming>| {
                 let mut app = app.clone();
+                req.extensions_mut()
+                    .insert(axum::extract::ConnectInfo(peer));
                 async move { app.call(req.map(axum::body::Body::new)).await }
             });
             let mut builder = hyper::server::conn::http1::Builder::new();
@@ -339,7 +360,33 @@ async fn run(mut cfg: Config) -> Result<(), String> {
     };
     info!(mode = if cfg.printer.is_some() { "remote" } else { "local" }, files = %store_desc, mqtt = %cfg.mqtt_host, "file store");
     let webrtc = camera::webrtc::start(camera.clone(), cfg.webrtc_port);
+
+    std::fs::create_dir_all(&cfg.state_dir)
+        .map_err(|e| format!("state dir {}: {e}", cfg.state_dir.display()))?;
+    let auth_key = auth::load_key(&cfg.state_dir).map_err(|e| format!("auth key: {e}"))?;
+    let providers = auth::providers(&cfg.auth, &cfg, &auth_key)?;
+    if providers.is_empty() {
+        warn!(
+            "authentication is disabled (--auth none): anyone who can reach the daemon can control the printer"
+        );
+    }
+    let auth = auth::Auth::new(
+        providers,
+        &cfg.state_dir,
+        cfg.session_days,
+        server_tls.is_some(),
+    );
+    let http = http_client::Http::new(cfg.acme_ca_file.as_deref())
+        .map_err(|e| format!("--acme-ca-file: {e}"))?;
+    let acme = acme::Acme::start(
+        &cfg.state_dir,
+        server_tls.as_ref().map(|t| t.resolver.clone()),
+        http,
+    );
+
     let app = Arc::new(App {
+        auth,
+        acme,
         store,
         store_desc,
         cfg: cfg.clone(),

@@ -234,3 +234,37 @@ dialog footer { padding: 10px 16px; border-top: 1px solid var(--border); display
   .objects-panel { width: 220px; }
   .layer-slider { right: 8px; }
 }
+
+/* Login and settings */
+.login { height: 100%; display: grid; place-items: center; padding: 16px; }
+.login .card { width: min(360px, 100%); padding: 20px; display: grid; gap: 12px; }
+.login .brand { font-size: 20px; text-align: center; }
+.login-form { display: grid; gap: 8px; }
+.login-form label { display: grid; gap: 4px; }
+.login-form input { width: 100%; }
+.login-or { text-align: center; font-size: 12px; }
+input[type="password"] {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  min-width: 0;
+}
+.settings { display: grid; gap: 12px; padding: 12px; overflow-y: auto; min-height: 0; align-content: start; max-width: 760px; width: 100%; margin: 0 auto; }
+.settings p { margin: 0 0 10px; }
+.settings code { font-size: 12px; }
+.form-grid { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 8px 12px; align-items: start; margin: 12px 0; }
+.form-grid > label:not(.check) { color: var(--muted); padding-top: 5px; }
+.form-grid input[type="text"], .form-grid input[type="password"], .form-grid select, .form-grid textarea { width: 100%; }
+.form-grid select + input { margin-top: 4px; }
+.form-grid .small-text { margin-top: 2px; }
+.control-inline { display: flex; align-items: center; gap: 6px; }
+.control-inline input { width: 90px; }
+.cert-status { display: grid; gap: 6px; padding: 10px; background: var(--panel-2); border-radius: 6px; }
+.cert-status details summary { cursor: pointer; font-size: 12px; }
+.cert-status .log { margin-top: 4px; background: var(--panel); }
+.btnrow .spacer { flex: 1; }
+@media (max-width: 600px) {
+  .form-grid { grid-template-columns: 1fr; gap: 2px; }
+  .form-grid > label:not(.check) { padding-top: 6px; }
+}

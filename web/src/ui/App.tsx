@@ -1,11 +1,13 @@
 import { signal } from '@preact/signals'
 import { gcodeState, mqttConnected, serial, status, wsConnected } from '../state/printer'
 import { Device } from './device/Device'
+import { Settings } from './Settings'
 import { Sidebar } from './Sidebar'
 import { Workspace } from './Workspace'
 
-export type Page = 'prepare' | 'preview' | 'device'
+export type Page = 'prepare' | 'preview' | 'device' | 'settings'
 export const page = signal<Page>('prepare')
+const PAGE_LABELS: Record<Page, string> = { prepare: 'Prepare', preview: 'Preview', device: 'Device', settings: 'Settings' }
 
 function JobChip() {
   const s = status.value
@@ -20,14 +22,15 @@ function JobChip() {
 }
 
 export function App() {
+  const sliceView = page.value === 'prepare' || page.value === 'preview'
   return (
     <div class="app">
       <div class="topbar">
         <div class="brand">Orca<span>X1</span></div>
         <div class="tabs">
-          {(['prepare', 'preview', 'device'] as Page[]).map((p) => (
+          {(['prepare', 'preview', 'device', 'settings'] as Page[]).map((p) => (
             <button class={page.value === p ? 'active' : ''} onClick={() => (page.value = p)}>
-              {p === 'prepare' ? 'Prepare' : p === 'preview' ? 'Preview' : 'Device'}
+              {PAGE_LABELS[p]}
             </button>
           ))}
         </div>
@@ -39,10 +42,11 @@ export function App() {
         </div>
       </div>
       {page.value === 'device' && <Device />}
+      {page.value === 'settings' && <Settings />}
       {/* Kept mounted so the 3D view survives tab switches. */}
-      <div class="workspace" style={page.value === 'device' ? { display: 'none' } : undefined}>
+      <div class="workspace" style={sliceView ? undefined : { display: 'none' }}>
         <Sidebar />
-        <Workspace mode={page.value === 'device' ? 'prepare' : page.value} />
+        <Workspace mode={page.value === 'preview' ? 'preview' : 'prepare'} />
       </div>
     </div>
   )

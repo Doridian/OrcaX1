@@ -1,5 +1,6 @@
 // Connection to orcax1d's /api/ws: live printer status and MQTT commands.
 import { computed, signal } from '@preact/signals'
+import { refreshAuth } from './auth'
 
 export type Status = Record<string, any>
 
@@ -12,6 +13,7 @@ export const commandLog = signal<{ t: number; text: string; ok: boolean | null }
 
 let ws: WebSocket | null = null
 let retry = 0
+let wanted = false
 
 function isObj(v: unknown): v is Record<string, any> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -41,7 +43,28 @@ function log(text: string, ok: boolean | null) {
   commandLog.value = [...commandLog.value.slice(-29), { t: Date.now(), text, ok }]
 }
 
+/** Keeps the status websocket open (reconnecting) until disconnectPrinter(). */
 export function connectPrinter() {
+  if (wanted) return
+  wanted = true
+  open()
+}
+
+export function disconnectPrinter() {
+  wanted = false
+  ws?.close()
+}
+
+function reconnect() {
+  if (!wanted) return
+  // A refused upgrade looks like any other close; stop if we were logged out.
+  refreshAuth()
+    .then((s) => { if (s.authenticated) setTimeout(open, Math.min(10000, 500 * 2 ** retry++)) })
+    .catch(() => setTimeout(reconnect, Math.min(10000, 500 * 2 ** retry++)))
+}
+
+function open() {
+  if (!wanted || ws) return
   const url = new URL('api/ws', document.baseURI)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   ws = new WebSocket(url)
@@ -50,7 +73,7 @@ export function connectPrinter() {
     wsConnected.value = false
     mqttConnected.value = false
     ws = null
-    setTimeout(connectPrinter, Math.min(10000, 500 * 2 ** retry++))
+    reconnect()
   }
   ws.onmessage = (ev) => {
     let msg: any
