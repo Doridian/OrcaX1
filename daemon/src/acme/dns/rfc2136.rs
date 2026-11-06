@@ -37,6 +37,7 @@ pub static PROVIDER: ProviderInfo = ProviderInfo {
             .secret()
             .required(),
     ],
+    persistent: false,
     build,
 };
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks'
-import { deleteAcmeCert, getAcme, issueAcme, saveAcme, type AcmeConfig, type AcmeView } from '../api'
+import { deleteAcmeCert, getAcme, issueAcme, registerAcmeAccount, saveAcme, type AcmeConfig, type AcmeView } from '../api'
 import { auth, logout } from '../state/auth'
 
 export function Settings() {
@@ -75,12 +75,17 @@ function Certificate() {
   const st = view.status
   const cert = view.cert
   const daysLeft = cert ? Math.floor((cert.not_after * 1000 - Date.now()) / 86400e3) : 0
+  const persistent = !!provider?.persistent
+  const persist = view.persist
+  // The records shown are for the saved config; edits change them only once saved.
+  const unsaved = JSON.stringify(current()) !== JSON.stringify(view.config)
 
   return (
     <div class="card">
       <h2>HTTPS certificate (ACME)</h2>
       <p class="muted small-text">
-        Gets a browser-trusted certificate from Let's Encrypt or another ACME CA, proven with a DNS TXT record (DNS-01),
+        Gets a browser-trusted certificate from Let's Encrypt or another ACME CA, proven with a DNS TXT record (DNS-01, or
+        dns-persist-01 with a record you set up once),
         so the printer never has to be reachable from the internet. Point the domain at the printer's LAN address in your
         DNS, then open <code>https://&lt;domain&gt;{location.port ? `:${location.port}` : ''}/</code>. Access by IP address keeps using the
         self-signed certificate.
@@ -161,11 +166,35 @@ function Certificate() {
           </div>
         </>)}
 
-        <label>DNS propagation wait</label>
-        <div class="control-inline">
-          <input type="number" min={0} max={900} value={cfg.propagation_seconds} onInput={(e) => set({ propagation_seconds: Math.max(0, Number(e.currentTarget.value) || 0) })} />
-          <span class="unit">s</span>
-        </div>
+        {persistent ? <>
+          <label>TXT records</label>
+          <div>
+            {persist?.error ? (
+              <div class="error small-text">{persist.error}</div>
+            ) : persist?.account && persist.records.length > 0 ? <>
+              <div class="muted small-text">Add these with your DNS provider and leave them in place:</div>
+              <table class="records">
+                <tbody>{persist.records.map((r) => <tr><td><code>{r.name}</code></td><td>TXT</td><td><code>{r.value}</code></td></tr>)}</tbody>
+              </table>
+            </> : persist?.account ? (
+              <div class="muted small-text">Add a domain and save to see the records.</div>
+            ) : (
+              <div class="muted small-text">The records name the CA account, so create it first (accepts the CA's terms of service).</div>
+            )}
+            {unsaved && <div class="warning small-text">Save to update the records for your changes.</div>}
+            <div class="btnrow">
+              <button disabled={busy || running} onClick={() => act(async () => { await saveAcme(current(), false); return registerAcmeAccount() })}>
+                {persist?.account ? 'Save and show records' : 'Save and create account'}
+              </button>
+            </div>
+          </div>
+        </> : <>
+          <label>DNS propagation wait</label>
+          <div class="control-inline">
+            <input type="number" min={0} max={900} value={cfg.propagation_seconds} onInput={(e) => set({ propagation_seconds: Math.max(0, Number(e.currentTarget.value) || 0) })} />
+            <span class="unit">s</span>
+          </div>
+        </>}
 
         <label />
         <label class="check">

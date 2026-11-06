@@ -263,6 +263,9 @@ input[type="password"] {
 .cert-status { display: grid; gap: 6px; padding: 10px; background: var(--panel-2); border-radius: 6px; }
 .cert-status details summary { cursor: pointer; font-size: 12px; }
 .cert-status .log { margin-top: 4px; background: var(--panel); }
+.records { border-collapse: collapse; font-size: 12px; margin: 4px 0; width: 100%; }
+.records td { padding: 3px 6px; border-top: 1px solid var(--panel-2); vertical-align: top; }
+.records code { user-select: all; word-break: break-all; }
 .btnrow .spacer { flex: 1; }
 @media (max-width: 600px) {
   .form-grid { grid-template-columns: 1fr; gap: 2px; }

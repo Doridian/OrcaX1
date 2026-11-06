@@ -101,8 +101,10 @@ Either:
 * **Or get a real certificate** from Let's Encrypt (or another ACME CA) under
   Settings → HTTPS certificate, using a domain you control. Validation is
   by DNS TXT record (DNS-01) through Cloudflare, an RFC 2136 server (BIND,
-  Knot, PowerDNS, … with a TSIG key) or acme-dns, so the printer stays off
-  the internet. Point the name at the printer's LAN IP in your DNS and open
+  Knot, PowerDNS, … with a TSIG key) or acme-dns, or with a persistent
+  dns-persist-01 record you add by hand once (no DNS credentials on the
+  printer; the CA must support it), so the printer stays off the internet.
+  Point the name at the printer's LAN IP in your DNS and open
   `https://<name>/`. The certificate renews itself; opening the printer by
   IP still uses the self-signed one.
 

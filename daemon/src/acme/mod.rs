@@ -1,5 +1,6 @@
-//! ACME (Let's Encrypt and friends) certificates via the DNS-01 challenge,
-//! so the printer never has to be reachable from the internet.
+//! ACME (Let's Encrypt and friends) certificates via the DNS-01 challenge
+//! (or dns-persist-01, with a record the user sets up once), so the printer
+//! never has to be reachable from the internet.
 //!
 //! Configured from the UI (`/api/acme`, behind login). The certificate is
 //! served for TLS connections whose SNI matches one of its names; access by
@@ -69,7 +70,8 @@ pub struct AcmeConfig {
     pub eab_hmac: String,
     pub dns_provider: String,
     pub dns: dns::Settings,
-    /// Wait after publishing the TXT records before asking the CA to check.
+    /// Wait after publishing the TXT records before asking the CA to check
+    /// (not used for dns-persist-01).
     pub propagation_seconds: u32,
 }
 
@@ -96,6 +98,20 @@ struct StoredAccount {
     eab_kid: String,
     credentials: AccountCredentials,
 }
+
+impl StoredAccount {
+    /// The account URL (`accounturi` in dns-persist-01 records). instant-acme
+    /// keeps it private but serializes it as `id`.
+    fn uri(&self) -> Option<String> {
+        serde_json::to_value(&self.credentials).ok()?["id"]
+            .as_str()
+            .map(str::to_string)
+    }
+}
+
+const DNS_PERSIST_01: &str = "dns-persist-01";
+const ISSUER_NEEDED: &str =
+    "set the CA's issuer domain name for dns-persist-01 (only Let's Encrypt's is known)";
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CertMeta {
@@ -250,17 +266,21 @@ impl Acme {
         Ok(())
     }
 
-    async fn account(&self, cfg: &AcmeConfig) -> Result<Account, String> {
-        let path = self.dir.join("account.json");
-        let builder = || Account::builder_with_http(Box::new(self.http.clone()));
-        if let Some(stored) = util::read_opt(&path)
+    /// The saved account, if it was made for `cfg`'s CA, email and EAB key.
+    fn stored_account(&self, cfg: &AcmeConfig) -> Option<StoredAccount> {
+        util::read_opt(&self.dir.join("account.json"))
             .ok()
             .flatten()
             .and_then(|b| serde_json::from_slice::<StoredAccount>(&b).ok())
-            && stored.directory == cfg.directory
-            && stored.email == cfg.email
-            && stored.eab_kid == cfg.eab_kid
-        {
+            .filter(|s| {
+                s.directory == cfg.directory && s.email == cfg.email && s.eab_kid == cfg.eab_kid
+            })
+    }
+
+    async fn account(&self, cfg: &AcmeConfig) -> Result<Account, String> {
+        let path = self.dir.join("account.json");
+        let builder = || Account::builder_with_http(Box::new(self.http.clone()));
+        if let Some(stored) = self.stored_account(cfg) {
             return builder()
                 .from_credentials(stored.credentials)
                 .await
@@ -309,6 +329,9 @@ impl Acme {
         let info = dns::find(&cfg.dns_provider).ok_or("unknown DNS provider")?;
         let provider = (info.build)(&cfg.dns, &self.http)?;
         let account = self.account(&cfg).await?;
+        if info.persistent {
+            self.log(format!("account {}", account.id()));
+        }
         self.log(format!(
             "ordering a certificate for {}",
             cfg.domains.join(", ")
@@ -330,6 +353,7 @@ impl Acme {
                 &mut order,
                 provider.as_ref(),
                 &mut records,
+                info.persistent,
                 cfg.propagation_seconds,
             )
             .await;
@@ -338,7 +362,18 @@ impl Acme {
                 self.log(format!("could not remove TXT {name}: {e}"));
             }
         }
-        res?;
+        if let Err(e) = res {
+            return Err(match self.persist_records(&cfg) {
+                Some(Ok(r)) if info.persistent => format!(
+                    "{e} (expected TXT records: {})",
+                    r.iter()
+                        .map(|(n, v)| format!("{n} \"{v}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                _ => e,
+            });
+        }
 
         self.log("validated; finalizing");
         let key = rcgen::KeyPair::generate().map_err(|e| e.to_string())?;
@@ -388,14 +423,23 @@ impl Acme {
         Ok(())
     }
 
-    /// Publishes the DNS-01 records, waits, and has the CA check them.
+    /// Publishes the DNS-01 records, waits, and has the CA check them. With
+    /// `persist`, uses dns-persist-01 and the records the user set up.
     async fn validate_order(
         &self,
         order: &mut instant_acme::Order,
         provider: &dyn dns::DnsProvider,
         records: &mut Vec<(String, String, String)>,
+        persist: bool,
         wait: u32,
     ) -> Result<(), String> {
+        let kind = || {
+            if persist {
+                ChallengeType::Unknown(DNS_PERSIST_01.into())
+            } else {
+                ChallengeType::Dns01
+            }
+        };
         let mut pending = 0;
         {
             let mut authzs = order.authorizations();
@@ -413,8 +457,16 @@ impl Acme {
                 let Identifier::Dns(base) = a.identifier().identifier.clone() else {
                     return Err(format!("{ident}: not a DNS name"));
                 };
+                if persist {
+                    a.challenge(kind()).ok_or_else(|| {
+                        format!("{ident}: the CA offered no {DNS_PERSIST_01} challenge")
+                    })?;
+                    self.log(format!("{ident}: using TXT _validation-persist.{base}"));
+                    pending += 1;
+                    continue;
+                }
                 let ch = a
-                    .challenge(ChallengeType::Dns01)
+                    .challenge(kind())
                     .ok_or_else(|| format!("{ident}: the CA offered no dns-01 challenge"))?;
                 let name = format!("_acme-challenge.{base}");
                 let value = ch.key_authorization().dns_value();
@@ -430,7 +482,7 @@ impl Acme {
         if pending == 0 {
             return Ok(());
         }
-        if wait > 0 {
+        if wait > 0 && !persist {
             self.log(format!("waiting {wait} s for DNS to propagate"));
             tokio::time::sleep(Duration::from_secs(wait.into())).await;
         }
@@ -441,7 +493,7 @@ impl Acme {
                 if a.status != AuthorizationStatus::Pending {
                     continue;
                 }
-                if let Some(mut ch) = a.challenge(ChallengeType::Dns01) {
+                if let Some(mut ch) = a.challenge(kind()) {
                     ch.set_ready()
                         .await
                         .map_err(|e| format!("challenge: {e}"))?;
@@ -481,8 +533,38 @@ impl Acme {
         })
     }
 
+    /// The dns-persist-01 records for the saved account: `None` if the
+    /// provider isn't `persist` or there is no account yet, `Err` if the
+    /// issuer is unknown.
+    fn persist_records(&self, cfg: &AcmeConfig) -> Option<Result<Vec<(String, String)>, String>> {
+        if !dns::find(&cfg.dns_provider).is_some_and(|p| p.persistent) {
+            return None;
+        }
+        let uri = self.stored_account(cfg)?.uri()?;
+        Some(
+            dns::persist::issuer(&cfg.dns, &cfg.directory)
+                .map(|i| dns::persist::records(&cfg.domains, &i, &uri))
+                .ok_or_else(|| ISSUER_NEEDED.to_string()),
+        )
+    }
+
     fn view(&self) -> Value {
         let cfg = self.config.lock().unwrap().clone();
+        let persist = dns::find(&cfg.dns_provider)
+            .is_some_and(|p| p.persistent)
+            .then(|| {
+                let account = self.stored_account(&cfg).and_then(|s| s.uri());
+                let (records, error) = match self.persist_records(&cfg) {
+                    Some(Ok(r)) => (r, None),
+                    Some(Err(e)) => (Vec::new(), Some(e)),
+                    None => (Vec::new(), None),
+                };
+                let records: Vec<Value> = records
+                    .into_iter()
+                    .map(|(name, value)| json!({ "name": name, "value": value }))
+                    .collect();
+                json!({ "account": account, "records": records, "error": error })
+            });
         let (cfg, secrets_set) = redact(cfg);
         json!({
             "config": cfg,
@@ -492,6 +574,7 @@ impl Acme {
             "tls": self.resolver.is_some(),
             "cert": *self.cert.lock().unwrap(),
             "status": *self.status.lock().unwrap(),
+            "persist": persist,
         })
     }
 }
@@ -549,6 +632,9 @@ fn validate(cfg: &AcmeConfig, full: bool, http: &Http) -> Result<(), String> {
             return Err("the EAB key ID needs its HMAC key".into());
         }
         (info.build)(&cfg.dns, http).map(|_| ())?;
+        if info.persistent && dns::persist::issuer(&cfg.dns, &cfg.directory).is_none() {
+            return Err(ISSUER_NEEDED.into());
+        }
     }
     Ok(())
 }
@@ -696,6 +782,28 @@ pub async fn put(
 pub async fn issue(State(app): State<Arc<App>>) -> Result<(StatusCode, Json<Value>), ApiError> {
     app.acme.begin()?;
     Ok((StatusCode::ACCEPTED, Json(app.acme.view())))
+}
+
+/// `POST /api/acme/account`: registers the ACME account for the saved
+/// config (or loads the existing one), so dns-persist-01 records can be set
+/// up before the first request.
+pub async fn account(State(app): State<Arc<App>>) -> Result<Json<Value>, ApiError> {
+    let acme = &app.acme;
+    if acme.status.lock().unwrap().running {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "a certificate request is running",
+        ));
+    }
+    let cfg = acme.config.lock().unwrap().clone();
+    validate(&cfg, false, &acme.http).map_err(ApiError::bad_request)?;
+    if !cfg.eab_kid.is_empty() && cfg.eab_hmac.is_empty() {
+        return Err(ApiError::bad_request("the EAB key ID needs its HMAC key"));
+    }
+    acme.account(&cfg)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(acme.view()))
 }
 
 /// `DELETE /api/acme/cert`: stop serving and delete the certificate, and
