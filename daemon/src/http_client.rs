@@ -59,10 +59,67 @@ impl Http {
         headers: &[(&str, &str)],
         body: Option<&Value>,
     ) -> Result<(StatusCode, Value), String> {
+        let body = match body {
+            Some(b) => Some((
+                "application/json",
+                serde_json::to_vec(b).map_err(|e| e.to_string())?,
+            )),
+            None => None,
+        };
+        let (status, bytes) = self
+            .send(method, url, "application/json", headers, body)
+            .await?;
+        Ok((
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        ))
+    }
+
+    /// POSTs `fields` as `application/x-www-form-urlencoded` and returns the
+    /// status and the response body as text.
+    pub async fn form(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        fields: &[(&str, &str)],
+    ) -> Result<(StatusCode, String), String> {
+        use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+        let body = fields
+            .iter()
+            .map(|(k, v)| {
+                format!(
+                    "{}={}",
+                    utf8_percent_encode(k, NON_ALPHANUMERIC),
+                    utf8_percent_encode(v, NON_ALPHANUMERIC)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        let (status, bytes) = self
+            .send(
+                Method::POST,
+                url,
+                "text/plain, */*",
+                headers,
+                Some(("application/x-www-form-urlencoded", body.into_bytes())),
+            )
+            .await?;
+        Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    /// Sends a request with an optional `(content type, body)`.
+    async fn send(
+        &self,
+        method: Method,
+        url: &str,
+        accept: &str,
+        headers: &[(&str, &str)],
+        body: Option<(&str, Vec<u8>)>,
+    ) -> Result<(StatusCode, Bytes), String> {
         let mut req = Request::builder()
             .method(method)
             .uri(url)
-            .header(header::ACCEPT, "application/json")
+            .header(header::ACCEPT, accept)
             .header(
                 header::USER_AGENT,
                 concat!("orcax1d/", env!("CARGO_PKG_VERSION")),
@@ -72,9 +129,9 @@ impl Http {
             req = req.header(*k, v);
         }
         let body = match body {
-            Some(b) => {
-                req = req.header(header::CONTENT_TYPE, "application/json");
-                BodyWrapper::from(serde_json::to_vec(b).map_err(|e| e.to_string())?)
+            Some((ct, b)) => {
+                req = req.header(header::CONTENT_TYPE, ct);
+                BodyWrapper::from(b)
             }
             None => BodyWrapper::default(),
         };
@@ -92,10 +149,7 @@ impl Http {
                 .await
                 .map_err(|e| format!("{url}: {e}"))?
                 .to_bytes();
-            Ok((
-                status,
-                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-            ))
+            Ok((status, bytes))
         };
         tokio::time::timeout(TIMEOUT, fut)
             .await

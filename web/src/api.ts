@@ -75,8 +75,8 @@ export async function info() {
 // ACME certificates (Settings page).
 
 export interface AcmeField { key: string; label: string; secret: boolean; required: boolean; placeholder?: string; help?: string; options?: string[] }
-/** `persistent`: dns-persist-01, records set up by hand (see `AcmeView.persist`). */
-export interface AcmeProvider { id: string; label: string; help: string; fields: AcmeField[]; persistent: boolean }
+/** `persistent`: dns-persist-01, records set up by hand (see `AcmeView.persist`). `single_value`: one TXT value per name. */
+export interface AcmeProvider { id: string; label: string; help: string; fields: AcmeField[]; persistent: boolean; single_value: boolean }
 export interface AcmeConfig {
   enabled: boolean
   directory: string

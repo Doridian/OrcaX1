@@ -19,6 +19,7 @@ pub static PROVIDER: ProviderInfo = ProviderInfo {
         .placeholder("letsencrypt.org")
         .help("The CA's issuer domain name for dns-persist-01. Leave empty for Let's Encrypt.")],
     persistent: true,
+    single_value: false,
     build,
 };
 

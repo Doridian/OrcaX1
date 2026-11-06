@@ -6,6 +6,7 @@
 
 mod acme_dns;
 mod cloudflare;
+mod dyndns;
 pub mod persist;
 mod rfc2136;
 
@@ -90,6 +91,9 @@ pub struct ProviderInfo {
     pub fields: &'static [Field],
     /// dns-persist-01: records are set up by hand once, not per request.
     pub persistent: bool,
+    /// Holds one TXT value per name, so names sharing a challenge record
+    /// (example.com and *.example.com) must be validated one at a time.
+    pub single_value: bool,
     #[serde(skip)]
     pub build: BuildFn,
 }
@@ -98,6 +102,7 @@ pub static PROVIDERS: &[&ProviderInfo] = &[
     &cloudflare::PROVIDER,
     &rfc2136::PROVIDER,
     &acme_dns::PROVIDER,
+    &dyndns::PROVIDER,
     &persist::PROVIDER,
 ];
 
