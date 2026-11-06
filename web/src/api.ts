@@ -75,7 +75,8 @@ export async function info() {
 // ACME certificates (Settings page).
 
 export interface AcmeField { key: string; label: string; secret: boolean; required: boolean; placeholder?: string; help?: string; options?: string[] }
-export interface AcmeProvider { id: string; label: string; help: string; fields: AcmeField[] }
+/** `persistent`: dns-persist-01, records set up by hand (see `AcmeView.persist`). */
+export interface AcmeProvider { id: string; label: string; help: string; fields: AcmeField[]; persistent: boolean }
 export interface AcmeConfig {
   enabled: boolean
   directory: string
@@ -97,6 +98,8 @@ export interface AcmeView {
   tls: boolean
   cert: { domains: string[]; directory: string; issued_at: number; not_after: number } | null
   status: { running: boolean; last_attempt: number | null; last_success: number | null; last_error: string | null; log: [number, string][] }
+  /** With a persistent provider saved: the ACME account URL (null before it is created) and the TXT records to add. */
+  persist: { account: string | null; records: { name: string; value: string }[]; error: string | null } | null
 }
 
 export async function getAcme(): Promise<AcmeView> {
@@ -111,6 +114,11 @@ export async function saveAcme(config: AcmeConfig, issue: boolean): Promise<Acme
 
 export async function issueAcme(): Promise<AcmeView> {
   return (await check(await fetch(api('acme/issue'), { method: 'POST' }))).json()
+}
+
+/** Creates (or loads) the ACME account for the saved config. */
+export async function registerAcmeAccount(): Promise<AcmeView> {
+  return (await check(await fetch(api('acme/account'), { method: 'POST' }))).json()
 }
 
 export async function deleteAcmeCert(): Promise<AcmeView> {

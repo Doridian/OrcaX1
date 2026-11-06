@@ -162,6 +162,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/print", post(printer::print))
         .route("/api/acme", get(acme::get).put(acme::put))
         .route("/api/acme/issue", post(acme::issue))
+        .route("/api/acme/account", post(acme::account))
         .route("/api/acme/cert", delete(acme::delete_cert))
         .route_layer(axum::middleware::from_fn_with_state(
             app.clone(),

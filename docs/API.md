@@ -107,6 +107,14 @@ or when the domains or CA change (after a failure it waits 6 h).
 DNS providers (`daemon/src/acme/dns/`): `cloudflare` (API token),
 `rfc2136` (dynamic update with a TSIG key; BIND, Knot, PowerDNS, …) and
 `acme-dns`. Each describes its settings form in `providers[].fields`.
+
+`persist` (`"persistent": true`) uses dns-persist-01 instead
+(draft-ietf-acme-dns-persist): the user adds a lasting TXT record at
+`_validation-persist.<domain>` once, containing
+`<issuer>; accounturi=<account URL>` (plus `; policy=wildcard` when a
+wildcard is among the names), and no DNS credentials are stored. The issuer
+domain defaults to `letsencrypt.org` for Let's Encrypt; set `dns.issuer` for
+other CAs. The CA must offer the dns-persist-01 challenge.
 `--acme-ca-file` adds trusted roots for the CA and DNS APIs (e.g. a private
 step-ca); otherwise the bundled Mozilla roots are used.
 
@@ -134,7 +142,12 @@ credentials), `account.json`, `cert.pem`, `key.pem`, `cert.json`.
   "tls": true,                           // false with --no-tls: a certificate is saved but not served
   "cert": {"domains":[…],"directory":"…","issued_at":1793922439,"not_after":1801698438},   // or null
   "status": {"running":false,"last_attempt":…,"last_success":…,"last_error":null,
-             "log":[[1793922437,"ordering a certificate for printer.example.com"], …]}
+             "log":[[1793922437,"ordering a certificate for printer.example.com"], …]},
+  "persist": null                        // with the persist provider saved:
+                                         // {"account":"https://…/acct/123" or null,
+                                         //  "records":[{"name":"_validation-persist.printer.example.com",
+                                         //              "value":"letsencrypt.org; accounturi=https://…/acct/123"}],
+                                         //  "error":null}   // e.g. the CA's issuer domain is unknown
 }
 ```
 
@@ -149,6 +162,13 @@ away. → `200` with the view above; `400` for an invalid config.
 Requests a certificate now with the saved config, in the background. → `202`
 with the view (poll `GET /api/acme` while `status.running`); `409` if one is
 already running.
+
+### `POST /api/acme/account`
+
+Creates the ACME account for the saved config (or loads the saved one) so
+the dns-persist-01 records can be set up before the first request. Accepts
+the CA's terms of service. → `200` with the view; `502` if the CA refuses;
+`409` while a request is running.
 
 ### `DELETE /api/acme/cert`
 

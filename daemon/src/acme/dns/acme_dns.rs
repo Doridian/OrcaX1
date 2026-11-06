@@ -23,6 +23,7 @@ pub static PROVIDER: ProviderInfo = ProviderInfo {
         Field::new("password", "Password").secret().required(),
         Field::new("subdomain", "Subdomain").required(),
     ],
+    persistent: false,
     build,
 };
 

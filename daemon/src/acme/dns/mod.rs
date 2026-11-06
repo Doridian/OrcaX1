@@ -1,10 +1,12 @@
 //! DNS-01 challenge providers. Each one publishes (and later removes) the
-//! `_acme-challenge.<domain>` TXT record. To add one, write a module with a
-//! `PROVIDER: ProviderInfo` and list it in [`PROVIDERS`]; the UI renders
-//! its settings form from `fields`.
+//! `_acme-challenge.<domain>` TXT record; `persist` instead stands for
+//! dns-persist-01, where the user sets up a lasting record by hand. To add
+//! one, write a module with a `PROVIDER: ProviderInfo` and list it in
+//! [`PROVIDERS`]; the UI renders its settings form from `fields`.
 
 mod acme_dns;
 mod cloudflare;
+pub mod persist;
 mod rfc2136;
 
 use serde::Serialize;
@@ -86,6 +88,8 @@ pub struct ProviderInfo {
     pub label: &'static str,
     pub help: &'static str,
     pub fields: &'static [Field],
+    /// dns-persist-01: records are set up by hand once, not per request.
+    pub persistent: bool,
     #[serde(skip)]
     pub build: BuildFn,
 }
@@ -94,6 +98,7 @@ pub static PROVIDERS: &[&ProviderInfo] = &[
     &cloudflare::PROVIDER,
     &rfc2136::PROVIDER,
     &acme_dns::PROVIDER,
+    &persist::PROVIDER,
 ];
 
 pub fn find(id: &str) -> Option<&'static ProviderInfo> {

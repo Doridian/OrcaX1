@@ -18,6 +18,7 @@ pub static PROVIDER: ProviderInfo = ProviderInfo {
         Field::new("zone_id", "Zone ID")
             .help("Optional. Found automatically from the domain if the token can list zones (Zone → Zone → Read)."),
     ],
+    persistent: false,
     build,
 };
 
