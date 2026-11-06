@@ -24,6 +24,7 @@ pub static PROVIDER: ProviderInfo = ProviderInfo {
         Field::new("subdomain", "Subdomain").required(),
     ],
     persistent: false,
+    single_value: false,
     build,
 };
 

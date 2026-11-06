@@ -43,7 +43,7 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
 * Login with the printer's LAN access code (pluggable, so other methods such
   as OIDC can be added), and an optional browser-trusted certificate from
   Let's Encrypt or any ACME CA via DNS-01 (Cloudflare, RFC 2136 / TSIG,
-  acme-dns), or dns-persist-01 with a TXT record you set up once by hand, so
+  acme-dns, DynDNS-style TXT updates such as Hurricane Electric), or dns-persist-01 with a TXT record you set up once by hand, so
   the printer never needs to be reachable from the internet.
 * Device page: live camera, job progress (pause, resume, stop, speed), temps
   and fans, AMS trays (edit, load, unload, re-read RFID), jog, home, extrude,

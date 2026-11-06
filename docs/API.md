@@ -105,8 +105,13 @@ daemon checks hourly and requests a new certificate 30 days before expiry,
 or when the domains or CA change (after a failure it waits 6 h).
 
 DNS providers (`daemon/src/acme/dns/`): `cloudflare` (API token),
-`rfc2136` (dynamic update with a TSIG key; BIND, Knot, PowerDNS, …) and
-`acme-dns`. Each describes its settings form in `providers[].fields`.
+`rfc2136` (dynamic update with a TSIG key; BIND, Knot, PowerDNS, …),
+`acme-dns` and `dyndns` (DynDNS2 `/nic/update` with `txt=`, e.g. Hurricane
+Electric; the `_acme-challenge` records must already exist with dynamic DNS
+enabled). Each describes its settings form in `providers[].fields`.
+Providers with `single_value` hold one TXT value per name, so names that
+share a record (`example.com` and `*.example.com`) are validated one after
+another.
 
 `persist` (`"persistent": true`) uses dns-persist-01 instead
 (draft-ietf-acme-dns-persist): the user adds a lasting TXT record at

@@ -19,6 +19,7 @@ pub static PROVIDER: ProviderInfo = ProviderInfo {
             .help("Optional. Found automatically from the domain if the token can list zones (Zone → Zone → Read)."),
     ],
     persistent: false,
+    single_value: false,
     build,
 };
 

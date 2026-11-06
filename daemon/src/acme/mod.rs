@@ -354,6 +354,7 @@ impl Acme {
                 provider.as_ref(),
                 &mut records,
                 info.persistent,
+                info.single_value,
                 cfg.propagation_seconds,
             )
             .await;
@@ -424,13 +425,15 @@ impl Acme {
     }
 
     /// Publishes the DNS-01 records, waits, and has the CA check them. With
-    /// `persist`, uses dns-persist-01 and the records the user set up.
+    /// `persist`, uses dns-persist-01 and the records the user set up. With
+    /// `single_value`, names sharing a record are checked in separate rounds.
     async fn validate_order(
         &self,
         order: &mut instant_acme::Order,
         provider: &dyn dns::DnsProvider,
         records: &mut Vec<(String, String, String)>,
         persist: bool,
+        single_value: bool,
         wait: u32,
     ) -> Result<(), String> {
         let kind = || {
@@ -440,16 +443,25 @@ impl Acme {
                 ChallengeType::Dns01
             }
         };
-        let mut pending = 0;
-        {
+        for first in std::iter::once(true).chain(std::iter::repeat(false)) {
+            // Indices of the authorizations handled in this round, and
+            // whether some had to wait for a later one.
+            let mut batch = Vec::new();
+            let mut deferred = false;
+            let mut names = std::collections::HashSet::new();
             let mut authzs = order.authorizations();
+            let mut i = 0;
             while let Some(a) = authzs.next().await {
+                let idx = i;
+                i += 1;
                 let mut a = a.map_err(|e| format!("authorization: {e}"))?;
                 let ident = a.identifier().to_string();
                 match a.status {
                     AuthorizationStatus::Pending => {}
                     AuthorizationStatus::Valid => {
-                        self.log(format!("{ident}: already authorized"));
+                        if first {
+                            self.log(format!("{ident}: already authorized"));
+                        }
                         continue;
                     }
                     s => return Err(format!("{ident}: authorization is {s:?}")),
@@ -462,35 +474,43 @@ impl Acme {
                         format!("{ident}: the CA offered no {DNS_PERSIST_01} challenge")
                     })?;
                     self.log(format!("{ident}: using TXT _validation-persist.{base}"));
-                    pending += 1;
+                    batch.push(idx);
+                    continue;
+                }
+                let name = format!("_acme-challenge.{base}");
+                if single_value && names.contains(&name) {
+                    deferred = true;
                     continue;
                 }
                 let ch = a
                     .challenge(kind())
                     .ok_or_else(|| format!("{ident}: the CA offered no dns-01 challenge"))?;
-                let name = format!("_acme-challenge.{base}");
                 let value = ch.key_authorization().dns_value();
                 self.log(format!("{ident}: adding TXT {name}"));
                 let token = provider
                     .present(&name, &value)
                     .await
                     .map_err(|e| format!("{ident}: {e}"))?;
+                names.insert(name.clone());
                 records.push((name, value, token));
-                pending += 1;
+                batch.push(idx);
             }
-        }
-        if pending == 0 {
-            return Ok(());
-        }
-        if wait > 0 && !persist {
-            self.log(format!("waiting {wait} s for DNS to propagate"));
-            tokio::time::sleep(Duration::from_secs(wait.into())).await;
-        }
-        {
+            if batch.is_empty() {
+                if first {
+                    return Ok(());
+                }
+                break;
+            }
+            if wait > 0 && !persist {
+                self.log(format!("waiting {wait} s for DNS to propagate"));
+                tokio::time::sleep(Duration::from_secs(wait.into())).await;
+            }
             let mut authzs = order.authorizations();
+            let mut i = 0;
             while let Some(a) = authzs.next().await {
                 let mut a = a.map_err(|e| format!("authorization: {e}"))?;
-                if a.status != AuthorizationStatus::Pending {
+                i += 1;
+                if !batch.contains(&(i - 1)) {
                     continue;
                 }
                 if let Some(mut ch) = a.challenge(kind()) {
@@ -499,8 +519,13 @@ impl Acme {
                         .map_err(|e| format!("challenge: {e}"))?;
                 }
             }
+            self.log("asked the CA to check the records");
+            if !deferred {
+                break;
+            }
+            // Wait for this round before its records are overwritten.
+            self.await_authorizations(order, &batch).await?;
         }
-        self.log("asked the CA to check the records");
         let status = order
             .poll_ready(
                 &RetryPolicy::new()
@@ -531,6 +556,44 @@ impl Acme {
         } else {
             why.join("; ")
         })
+    }
+
+    /// Polls the authorizations at `batch` (indices into the order) until
+    /// the CA has decided; fails unless all are valid.
+    async fn await_authorizations(
+        &self,
+        order: &mut instant_acme::Order,
+        batch: &[usize],
+    ) -> Result<(), String> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+        let mut authzs = order.authorizations();
+        let mut i = 0;
+        while let Some(a) = authzs.next().await {
+            let mut a = a.map_err(|e| format!("authorization: {e}"))?;
+            i += 1;
+            if !batch.contains(&(i - 1)) {
+                continue;
+            }
+            while a.status == AuthorizationStatus::Pending {
+                if tokio::time::Instant::now() > deadline {
+                    return Err(format!("{}: validation timed out", a.identifier()));
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                a.refresh()
+                    .await
+                    .map_err(|e| format!("authorization: {e}"))?;
+            }
+            if a.status != AuthorizationStatus::Valid {
+                let why = a
+                    .challenges
+                    .iter()
+                    .find_map(|c| c.error.as_ref()?.detail.clone())
+                    .unwrap_or_else(|| format!("authorization is {:?}", a.status));
+                return Err(format!("{}: {why}", a.identifier()));
+            }
+            self.log(format!("{}: validated", a.identifier()));
+        }
+        Ok(())
     }
 
     /// The dns-persist-01 records for the saved account: `None` if the

@@ -38,6 +38,7 @@ pub static PROVIDER: ProviderInfo = ProviderInfo {
             .required(),
     ],
     persistent: false,
+    single_value: false,
     build,
 };
 
