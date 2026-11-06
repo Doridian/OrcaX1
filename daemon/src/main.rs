@@ -7,6 +7,7 @@ mod ftps;
 mod http_client;
 mod mqtt;
 mod printer;
+mod ssdp;
 mod static_files;
 mod store;
 mod tls;
@@ -119,6 +120,7 @@ async fn info_handler(State(app): State<Arc<App>>) -> impl IntoResponse {
         "boot_id": *BOOT_ID,
         "update_available": update::available(&app),
         "serial": app.printer.serial(),
+        "model": app.printer.model(),
         "mqtt_connected": app.printer.connected(),
         "camera_available": app.camera.available(),
         "camera_error": app.camera.last_error(),
@@ -424,6 +426,7 @@ async fn run(mut cfg: Config) -> Result<(), String> {
         ca_der: server_tls.as_ref().and_then(|t| t.ca_der.clone()),
     });
 
+    tokio::spawn(ssdp::run(printer.clone()));
     tokio::spawn(mqtt::run(printer, cfg.clone(), outbox));
     tokio::spawn(camera::run(camera, cfg.clone()));
 

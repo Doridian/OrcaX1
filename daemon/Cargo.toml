@@ -25,6 +25,7 @@ rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pe
 ring = "0.17.14"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
+socket2 = "0.6.5"
 serde_json = "1.0.154"
 str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"] }
 time = "0.3.55"
