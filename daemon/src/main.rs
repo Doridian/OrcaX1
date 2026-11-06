@@ -39,7 +39,6 @@ pub struct App {
     pub printer: Arc<Printer>,
     pub camera: Arc<CameraHub>,
     pub webrtc: camera::webrtc::Handle,
-    pub ca_der: Option<Vec<u8>>,
     pub store: Arc<dyn store::FileStore>,
     /// Where the file API points: the SD dir, or ftps://<printer>/.
     pub store_desc: String,
@@ -129,28 +128,50 @@ async fn info_handler(State(app): State<Arc<App>>) -> impl IntoResponse {
     }))
 }
 
-async fn ca_handler(State(app): State<Arc<App>>) -> Response {
-    match &app.ca_der {
-        Some(der) => (
-            [
-                (
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static("application/x-x509-ca-cert"),
-                ),
-                (
-                    header::CONTENT_DISPOSITION,
-                    HeaderValue::from_static("attachment; filename=\"orcax1d-ca.crt\""),
-                ),
-            ],
-            der.clone(),
-        )
-            .into_response(),
-        None => files::ApiError::new(
-            StatusCode::NOT_FOUND,
-            "no generated CA (custom certificate in use)",
-        )
-        .into_response(),
+/// `scheme://host[:port]` with the scheme's default port dropped, lowercased.
+fn normalize_origin(scheme: &str, authority: &str) -> String {
+    let a = authority.to_ascii_lowercase();
+    let default = if scheme == "https" { ":443" } else { ":80" };
+    let a = a.strip_suffix(default).unwrap_or(&a);
+    format!("{scheme}://{a}")
+}
+
+/// Whether a request's `Origin` (if any) is this server itself.
+fn same_origin(headers: &HeaderMap, tls: bool) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        // Not sent by a browser making a cross-origin request.
+        return true;
+    };
+    let (Ok(origin), Some(host)) = (
+        origin.to_str(),
+        headers.get(header::HOST).and_then(|h| h.to_str().ok()),
+    ) else {
+        return false;
+    };
+    let Some((scheme, authority)) = origin.split_once("://") else {
+        return false; // e.g. "null" from a sandboxed frame
+    };
+    let ours = if tls { "https" } else { "http" };
+    normalize_origin(&scheme.to_ascii_lowercase(), authority) == normalize_origin(ours, host)
+}
+
+/// Rejects requests that change something, and WebSocket upgrades, coming
+/// from another origin. The session cookie is SameSite=Strict, which keeps
+/// out other sites but not other origins on the same site (another host
+/// under the same domain, or another port or scheme on the printer).
+async fn origin_check(
+    State(tls): State<bool>,
+    req: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let safe = matches!(
+        *req.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD
+    ) && !req.headers().contains_key(header::UPGRADE);
+    if safe || same_origin(req.headers(), tls) {
+        return next.run(req).await;
     }
+    files::ApiError::new(StatusCode::FORBIDDEN, "cross-origin request refused").into_response()
 }
 
 async fn api_not_found() -> files::ApiError {
@@ -158,6 +179,7 @@ async fn api_not_found() -> files::ApiError {
 }
 
 fn router(app: Arc<App>) -> Router {
+    let tls = !app.cfg.no_tls;
     // Everything here needs a login (when auth is enabled).
     let protected = Router::new()
         .route("/api/info", get(info_handler))
@@ -191,11 +213,11 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/oidc/start", get(auth::oidc::start))
         .route(auth::oidc::CALLBACK_PATH, get(auth::oidc::callback))
-        .route("/api/ca.crt", get(ca_handler))
         .route("/api", any(api_not_found))
         .route("/api/{*rest}", any(api_not_found))
         .fallback(static_files::serve)
         .with_state(app)
+        .layer(axum::middleware::from_fn_with_state(tls, origin_check))
         .layer(axum::middleware::map_response(security_headers))
 }
 
@@ -423,7 +445,6 @@ async fn run(mut cfg: Config) -> Result<(), String> {
         printer: printer.clone(),
         camera: camera.clone(),
         webrtc,
-        ca_der: server_tls.as_ref().and_then(|t| t.ca_der.clone()),
     });
 
     tokio::spawn(ssdp::run(printer.clone()));
@@ -463,4 +484,46 @@ async fn run(mut cfg: Config) -> Result<(), String> {
     shutdown_signal().await;
     info!("shutting down");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn h(origin: Option<&str>, host: &str) -> HeaderMap {
+        let mut m = HeaderMap::new();
+        m.insert(header::HOST, HeaderValue::from_str(host).unwrap());
+        if let Some(o) = origin {
+            m.insert(header::ORIGIN, HeaderValue::from_str(o).unwrap());
+        }
+        m
+    }
+
+    #[test]
+    fn origin_matching() {
+        assert!(same_origin(&h(None, "10.0.0.5"), true));
+        assert!(same_origin(&h(Some("https://10.0.0.5"), "10.0.0.5"), true));
+        assert!(same_origin(
+            &h(Some("https://10.0.0.5:443"), "10.0.0.5"),
+            true
+        ));
+        assert!(same_origin(
+            &h(Some("https://Printer.LAN:8443"), "printer.lan:8443"),
+            true
+        ));
+        assert!(same_origin(
+            &h(Some("http://localhost:8443"), "localhost:8443"),
+            false
+        ));
+        assert!(!same_origin(&h(Some("http://10.0.0.5"), "10.0.0.5"), true));
+        assert!(!same_origin(
+            &h(Some("https://evil.lan"), "printer.lan"),
+            true
+        ));
+        assert!(!same_origin(
+            &h(Some("https://10.0.0.5:8443"), "10.0.0.5"),
+            true
+        ));
+        assert!(!same_origin(&h(Some("null"), "10.0.0.5"), true));
+    }
 }

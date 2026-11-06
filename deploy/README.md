@@ -13,16 +13,22 @@ the daemon logs a warning and only redirects 8080. `ORCAX1D_REDIRECT_LISTEN`
 ## Layout on the printer
 
 ```
-/mnt/sdcard/orcax1/orcax1d        the binary (copied to /userdata/bin at start: the SD card is mounted noexec-style)
-/userdata/bin/orcax1d             the copy that runs (internal flash; refreshed only when it differs)
+/mnt/sdcard/orcax1/orcax1d        the release's binary (install.sh copies it to /userdata/orcax1)
 /mnt/sdcard/orcax1/www/           the web UI (contents of web/dist)
 /mnt/sdcard/orcax1/install.sh     installs/upgrades/uninstalls (run over SSH)
 /mnt/sdcard/orcax1/S99orcax1d     init script (install.sh copies it to /etc/init.d)
-/mnt/sdcard/orcax1/state/         generated TLS CA + certificate, login sessions, ACME account/certificate
-/mnt/sdcard/orcax1/orcax1d.conf   optional ORCAX1D_* overrides (shell syntax)
+/userdata/orcax1/orcax1d          the binary that runs (internal flash)
+/userdata/orcax1/state/           generated TLS CA + certificate, login sessions, OIDC and ACME settings with their secrets
+/userdata/orcax1/orcax1d.conf     optional ORCAX1D_* overrides (shell syntax)
 /etc/init.d/S99orcax1d            init script (persists in X1Plus's overlay)
 /tmp/orcax1d.log                  log (previous run: /tmp/orcax1d.log.old)
 ```
+
+Everything on the SD card can be read and replaced by anyone with the LAN
+access code, through the printer's FTPS server. That is why the binary that
+runs as root, its configuration and every secret it keeps (certificate
+keys, sessions, OIDC client secret, DNS API credentials) live on internal
+flash under `/userdata/orcax1` instead.
 
 ## Install from a release
 
@@ -45,11 +51,12 @@ You need X1Plus with SSH enabled (root login).
 
 To upgrade, open Settings → Update in the web UI and upload the new zip. The
 daemon unpacks it into `orcax1/`, checks that the new binary runs, runs
-`install.sh` and restarts (log: `/tmp/orcax1d-update.log`). `state/` and
-`orcax1d.conf` are kept. Or do it by hand: unpack a newer zip over the old folder and run `install.sh`
+`install.sh` and restarts (log: `/tmp/orcax1d-update.log`).
+`/userdata/orcax1/state/` and `orcax1d.conf` are kept. Or do it by hand: unpack a newer zip over the old folder and run `install.sh`
 again; it also deletes web files left over from the previous release (those
 not in `www.manifest`). To remove OrcaX1, run
-`sh /mnt/sdcard/orcax1/install.sh uninstall`, then delete the folder.
+`sh /mnt/sdcard/orcax1/install.sh uninstall`, then delete
+`/mnt/sdcard/orcax1` and `/userdata/orcax1`.
 
 ## Install from a local build
 
@@ -68,12 +75,12 @@ X1Plus runs every `/etc/init.d/S??*` script at boot, and `/etc` lives in
 X1Plus's persistent overlay, so installing `S99orcax1d` there is all that is
 needed. Control it with `/etc/init.d/S99orcax1d {start|stop|restart}`.
 
-The init script copies the binary from the SD card to `/userdata/bin`
-(internal flash, created if missing; skipped when already identical) and runs it at
-nice level 10 with the defaults for the printer (MQTT on 127.0.0.1:8883,
+The init script runs `/userdata/orcax1/orcax1d` (put there by `install.sh`)
+at nice level 10 with the defaults for the printer (MQTT on 127.0.0.1:8883,
 access code from `/config/device/access_token`, serial from `bbl_3dpsn`, SD
-card at `/mnt/sdcard`). Upgrading is just replacing the files on the SD card
-and restarting.
+card at `/mnt/sdcard`). It never runs anything from the SD card itself, so
+replacing files there has no effect until `install.sh` is run (over SSH, or
+by an update uploaded in the web UI).
 
 ## Logging in
 
@@ -100,8 +107,13 @@ kanidm system oauth2 show-basic-secret orcax1
 ```
 
 and use `https://<idm>/oauth2/openid/orcax1` as the issuer. Kanidm only
-issues tokens to members of scope-mapped groups; the allow list on the
-settings page can narrow it further (usernames, emails or `groups` entries).
+issues tokens to members of scope-mapped groups; the allowed users and
+groups on the settings page can narrow it further. The claims used for the
+user id, username and groups are configurable (defaults `sub`,
+`preferred_username`, `groups`); pick a username claim users cannot change
+themselves. With no allowed users or groups, anyone who can get a token for
+the client gets in, so never leave both empty with a provider that hands
+out tokens to anyone (Google, GitHub, …).
 The access code login stays available unless you start the daemon with
 `ORCAX1D_AUTH=oidc`. If the provider uses a private CA, point
 `ORCAX1D_CA_FILE` at its PEM certificate.
@@ -111,20 +123,17 @@ The access code login stays available unless you start the daemon with
 The browser needs a secure context (HTTPS) for the slicer's
 `SharedArrayBuffer`. On first start the daemon creates a
 small local CA and a certificate for the printer's hostname and IPv4
-addresses in `state/` (re-issued automatically if the IP changes).
+addresses in `/userdata/orcax1/state/` (re-issued automatically if the IP
+changes). The CA exists only to sign that certificate and is deliberately
+not offered for download: **never install it as a trusted root** on your
+devices. It is not limited to the printer's names, so anyone who got hold
+of its key could impersonate any website to every device that trusts it.
 
 Either:
 
 * **Accept the warning once.** Open `https://<printer-ip>/`, then
   "Advanced" → "Proceed" (Chrome/Edge) or "Accept the Risk and Continue"
   (Firefox). Safari: "Show Details" → "visit this website".
-* **Or trust the CA** to get a clean padlock that survives IP changes:
-  download `https://<printer-ip>/api/ca.crt` and import it as a trusted
-  root (Windows: double-click → Install → "Trusted Root Certification
-  Authorities"; macOS: Keychain Access → System → set to "Always Trust";
-  Firefox: Settings → Certificates → Authorities → Import; Android/iOS: install
-  as a CA profile). The CA is unique to your printer; delete `state/` to
-  regenerate it.
 
 * **Or get a real certificate** from Let's Encrypt (or another ACME CA) under
   Settings → HTTPS certificate, using a domain you control. Validation is
@@ -137,8 +146,19 @@ Either:
   `https://<name>/`. The certificate renews itself; opening the printer by
   IP still uses the self-signed one.
 
+Whatever credentials you give the printer for DNS-01, **create a token
+limited to exactly what it needs, never an account-wide key**: a Cloudflare
+API token with only *Zone → DNS → Edit* on the one zone (better: a zone you
+delegate `_acme-challenge` to), an RFC 2136 TSIG key whose update policy
+only allows TXT records at `_acme-challenge.<name>`, an acme-dns account
+(which can only ever set its own TXT record), or a dynamic TXT record's own
+key. The same goes for the OpenID Connect client: register a client for
+the printer alone. They are kept on internal flash, but anyone who gets
+root on the printer can read them.
+
 To use your own certificate instead, set `ORCAX1D_TLS_CERT` and
-`ORCAX1D_TLS_KEY` in `orcax1d.conf`.
+`ORCAX1D_TLS_KEY` in `/userdata/orcax1/orcax1d.conf` (keep the key on
+`/userdata` too, not on the SD card).
 
 ## Development: remote mode
 
@@ -172,14 +192,14 @@ cd web && npm run dev      # or: ORCAX1_DAEMON=http://other-host:8443 npm run de
 ```
 
 Drop `--no-tls` to test HTTPS from other devices; the certificate then lives
-in `--state-dir` (default `/mnt/sdcard/orcax1/state`, so pass e.g.
+in `--state-dir` (default `/userdata/orcax1/state`, so pass e.g.
 `--state-dir ./state` on a PC).
 
 ## Port 443
 
 The daemon runs as root from the init script, so it binds 443 directly (no
 `setcap` needed). To use another port, set `ORCAX1D_LISTEN` in
-`orcax1d.conf`, e.g. `ORCAX1D_LISTEN=0.0.0.0:8443`.
+`/userdata/orcax1/orcax1d.conf`, e.g. `ORCAX1D_LISTEN=0.0.0.0:8443`.
 
 ## Options
 

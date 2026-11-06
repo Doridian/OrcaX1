@@ -14,8 +14,7 @@ Cross-Origin-Embedder-Policy: require-corp
 Cross-Origin-Resource-Policy: same-origin
 ```
 
-Everything under `/api/` needs a login except `/api/auth/*` and
-`/api/ca.crt`; without one it answers `401 {"error":"not logged in"}` (the
+Everything under `/api/` needs a login except `/api/auth/*`; without one it answers `401 {"error":"not logged in"}` (the
 WebSocket upgrade too). Static files are public, so the login page can load.
 `--auth none` turns authentication off.
 
@@ -70,21 +69,32 @@ the browser navigates to `url`.
 * `GET /api/auth/oidc/callback` checks the state against the cookie,
   redeems the code at the token endpoint (`client_secret_basic`, else
   `client_secret_post`, or just `client_id` for a public client), checks the
-  ID token's `iss`, `aud`/`azp`, `exp` (5 min leeway) and `nonce`, applies
-  the allow list, then sets the session cookie and `303`s to `/`. The token
+  ID token's `iss`, `aud`/`azp`, `exp` (5 min leeway) and `nonce`, maps
+  the claims (below) and applies the allow lists, then sets the session cookie and `303`s to `/`. The token
   comes straight from the provider over TLS, so its signature is not
   checked (OpenID Connect Core 3.1.3.7). Failures `303` to
   `/?login_error=<message>`, which the login page shows.
 
-Sessions end when the issuer, client ID or allow list changes, or OIDC is
-turned off.
+Who logged in comes from three configurable claims (a literal claim name,
+or a dotted path into nested objects such as `realm_access.roles`):
+`user_id_claim` (default `sub`; the session's subject), `username_claim`
+(default `preferred_username`, falling back to the user id; shown in the UI)
+and `groups_claim` (default `groups`; an array of strings or one string). If
+the user id or username claim is `email`, the token must carry
+`email_verified: true`. `allowed_users` is matched against the user id and
+username, `allowed_groups` against the groups (case-insensitively); a login
+passes if either matches, and anyone passes when both are empty.
+
+Sessions end when the issuer, client ID, claim names or allow lists change,
+or OIDC is turned off.
 
 `GET /api/oidc` (logged in) →
-`{"config":{"enabled","label","issuer","client_id","client_secret":"","scopes","allowed":[…]},"secret_set":bool,"available":bool,"callback_path":"/api/auth/oidc/callback"}`.
+`{"config":{"enabled","label","issuer","client_id","client_secret":"","scopes","user_id_claim","username_claim","groups_claim","allowed_users":[…],"allowed_groups":[…]},"secret_set":bool,"available":bool,"callback_path":"/api/auth/oidc/callback"}`.
 `available` is false when `--auth` leaves out `oidc`.
 
 `PUT /api/oidc` with `{"config":{…},"clear_secret":false}` saves it to
-`<state-dir>/oidc.json`. An empty `client_secret` keeps the saved one. When
+`<state-dir>/oidc.json`. An empty `client_secret` keeps the saved one, as
+long as the issuer and client ID are unchanged (otherwise it is dropped). When
 enabled, the issuer's discovery document is fetched first and a problem is
 a `400`.
 
@@ -121,13 +131,6 @@ file extension fall back to `index.html`. `.wasm` is served as
   "sd_dir": "/mnt/sdcard"             // remote mode: "ftps://<printer>:990/"
 }
 ```
-
-## `GET /api/ca.crt`
-
-The local CA that signed the daemon's self-signed HTTPS certificate (DER,
-`application/x-x509-ca-cert`). Installing it as a trusted root removes the
-browser warning. 404 when `--tls-cert` is used or in `--no-tls` mode. No
-login needed.
 
 ## ACME certificates
 
@@ -195,7 +198,9 @@ credentials), `account.json`, `cert.pem`, `key.pem`, `cert.json`.
 ### `PUT /api/acme`
 
 Body `{"config":{…},"issue":false}`. Empty secret fields keep their saved
-value (for the same provider). With `"issue":true` a request starts right
+value only while the provider and all its other settings (server, URL,
+zone, …) are unchanged; the EAB HMAC key only while the directory and EAB
+key ID are. Otherwise they have to be entered again. With `"issue":true` a request starts right
 away. → `200` with the view above; `400` for an invalid config.
 
 ### `POST /api/acme/issue`
@@ -351,7 +356,8 @@ files at the zip root) with `orcax1d`, `www/index.html`, `install.sh` and
 running binary and runs its `--version`, which rejects a binary for the
 wrong CPU or a corrupt one. Only then is each top-level file and directory
 swapped into place (put back if a step fails), so `www/` ends up exactly the
-new release's. `state/` and `orcax1d.conf` are left alone. A rejected zip
+new release's. The state dir and `orcax1d.conf` live in `/userdata/orcax1`
+and are not touched; `install.sh` copies the new binary there. A rejected zip
 gives `400 {"error":"…"}` and changes nothing.
 
 → `202 {"version":"v1.2.0","log":"/tmp/orcax1d-update.log"}`. About a second

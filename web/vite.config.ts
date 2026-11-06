@@ -15,7 +15,9 @@ export default defineConfig({
   resolve: { alias: { react: 'preact/compat', 'react-dom': 'preact/compat' } },
   server: {
     headers: isolation,
-    proxy: { '/api': { target: daemon, ws: true, secure: false, changeOrigin: true } },
+    // The daemon refuses state-changing and WebSocket requests from another
+    // origin, so present the proxied ones as coming from the daemon itself.
+    proxy: { '/api': { target: daemon, ws: true, secure: false, changeOrigin: true, headers: { origin: new URL(daemon).origin } } },
   },
   preview: { headers: isolation },
   build: { target: 'es2022', chunkSizeWarningLimit: 2000 },

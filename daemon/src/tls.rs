@@ -148,8 +148,6 @@ impl ResolvesServerCert for CertResolver {
 
 pub struct ServerTls {
     pub config: Arc<ServerConfig>,
-    /// DER of the generated local CA, if we generated the certificate.
-    pub ca_der: Option<Vec<u8>>,
     pub resolver: Arc<CertResolver>,
 }
 
@@ -158,7 +156,7 @@ pub fn server_config(
     key: Option<&Path>,
     state_dir: &Path,
 ) -> io::Result<ServerTls> {
-    let (ck, ca_der, refresh) = match (cert, key) {
+    let (ck, refresh) = match (cert, key) {
         (Some(c), Some(k)) => {
             let chain = CertificateDer::pem_file_iter(c)
                 .map_err(err)?
@@ -166,13 +164,12 @@ pub fn server_config(
                 .map_err(err)?;
             let key = PrivateKeyDer::from_pem_file(k).map_err(err)?;
             info!(cert = %c.display(), "using supplied TLS certificate");
-            (certified_key(chain, key)?, None, None)
+            (certified_key(chain, key)?, None)
         }
         _ => {
             let store = SelfSigned::new(state_dir)?;
             let ck = store.load_or_issue()?;
-            let ca = store.ca_der.clone();
-            (ck, Some(ca), Some(store))
+            (ck, Some(store))
         }
     };
     let resolver = Arc::new(CertResolver {
@@ -204,7 +201,6 @@ pub fn server_config(
     }
     Ok(ServerTls {
         config: Arc::new(config),
-        ca_der,
         resolver,
     })
 }

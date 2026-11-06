@@ -59,10 +59,18 @@ pub struct OidcConfig {
     pub client_secret: String,
     /// Space-separated; `openid` is always added.
     pub scopes: String,
-    /// Who may log in: `sub`, `preferred_username` or `email` values, or
-    /// entries of the `groups` claim. Empty: anyone the provider lets
-    /// through.
-    pub allowed: Vec<String>,
+    /// ID token claim holding the stable user id (sessions are tied to it).
+    pub user_id_claim: String,
+    /// Claim holding the name shown in the UI and matched by `allowed_users`.
+    pub username_claim: String,
+    /// Claim holding the user's groups (an array of strings, or one string).
+    pub groups_claim: String,
+    /// Users who may log in, matched against the user id and username
+    /// claims. Together with `allowed_groups`; both empty: anyone the
+    /// provider lets through.
+    pub allowed_users: Vec<String>,
+    /// Groups whose members may log in, matched against the groups claim.
+    pub allowed_groups: Vec<String>,
 }
 
 impl Default for OidcConfig {
@@ -74,7 +82,11 @@ impl Default for OidcConfig {
             client_id: String::new(),
             client_secret: String::new(),
             scopes: "openid profile email".into(),
-            allowed: Vec::new(),
+            user_id_claim: "sub".into(),
+            username_claim: "preferred_username".into(),
+            groups_claim: "groups".into(),
+            allowed_users: Vec::new(),
+            allowed_groups: Vec::new(),
         }
     }
 }
@@ -364,36 +376,65 @@ impl Oidc {
         let claims = decode_jwt_payload(id_token)?;
         check_claims(&claims, &d.issuer, &cfg.client_id, &pending.nonce)?;
 
-        let s = |k: &str| {
-            claims
-                .get(k)
-                .and_then(Value::as_str)
-                .filter(|v| !v.is_empty())
-        };
-        let sub = s("sub").ok_or("the ID token has no sub")?.to_string();
-        let name = s("preferred_username")
-            .or(s("name"))
-            .or(s("email"))
-            .unwrap_or(&sub)
-            .to_string();
-        if !cfg.allowed.is_empty() {
-            let mut ids: Vec<&str> = vec![&sub];
-            ids.extend(s("preferred_username"));
-            if claims.get("email_verified") != Some(&Value::Bool(false)) {
-                ids.extend(s("email"));
-            }
-            if let Some(Value::Array(g)) = claims.get("groups") {
-                ids.extend(g.iter().filter_map(Value::as_str));
-            }
-            let ok = cfg
-                .allowed
-                .iter()
-                .any(|a| ids.iter().any(|i| i.eq_ignore_ascii_case(a)));
-            if !ok {
-                return Err(format!("{name} is not allowed to use this printer"));
-            }
-        }
-        Ok(Identity { subject: sub, name })
+        identity(&cfg, &claims)
+    }
+}
+
+/// A claim by name, or by a dot-separated path into nested objects (e.g.
+/// Keycloak's `realm_access.roles`) when no claim has the literal name.
+fn claim<'a>(claims: &'a Value, name: &str) -> Option<&'a Value> {
+    if let Some(v) = claims.get(name) {
+        return Some(v);
+    }
+    name.split('.').try_fold(claims, |v, k| v.get(k))
+}
+
+/// A claim's values as strings: a string, a number, or an array of those.
+fn claim_strings(claims: &Value, name: &str) -> Vec<String> {
+    let one = |v: &Value| match v {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    };
+    match claim(claims, name) {
+        Some(Value::Array(a)) => a.iter().filter_map(one).collect(),
+        Some(v) => one(v).into_iter().collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Maps the ID token's claims to who logged in, applying the allow lists.
+fn identity(cfg: &OidcConfig, claims: &Value) -> Result<Identity, String> {
+    let first = |name: &str| claim_strings(claims, name).into_iter().next();
+    let uid_claim = cfg.user_id_claim.as_str();
+    let subject = first(uid_claim)
+        .ok_or_else(|| format!("the ID token has no {uid_claim:?} claim (the user id claim)"))?;
+    let name = first(&cfg.username_claim).unwrap_or_else(|| subject.clone());
+    // An email address only identifies someone once the provider checked it.
+    if [uid_claim, cfg.username_claim.as_str()].contains(&"email")
+        && claims.get("email_verified") != Some(&Value::Bool(true))
+    {
+        return Err(format!(
+            "{name}: the provider does not say the email address is verified"
+        ));
+    }
+    if cfg.allowed_users.is_empty() && cfg.allowed_groups.is_empty() {
+        return Ok(Identity { subject, name });
+    }
+    let user_ok = cfg
+        .allowed_users
+        .iter()
+        .any(|a| a.eq_ignore_ascii_case(&subject) || a.eq_ignore_ascii_case(&name));
+    let group_ok = !cfg.allowed_groups.is_empty() && {
+        let groups = claim_strings(claims, &cfg.groups_claim);
+        cfg.allowed_groups
+            .iter()
+            .any(|a| groups.iter().any(|g| g.eq_ignore_ascii_case(a)))
+    };
+    if user_ok || group_ok {
+        Ok(Identity { subject, name })
+    } else {
+        Err(format!("{name} is not allowed to use this printer"))
     }
 }
 
@@ -474,11 +515,23 @@ impl AuthProvider for Oidc {
         })
     }
 
-    /// Sessions end when the provider, client or allow list changes.
+    /// Sessions end when the provider, client, claim mapping or allow
+    /// lists change.
     fn binding(&self) -> Option<String> {
         let cfg = self.config.lock().unwrap();
         let mut m = cfg.issuer.trim_end_matches('/').to_string();
-        for s in [&cfg.client_id].into_iter().chain(&cfg.allowed) {
+        let fields = [
+            &cfg.client_id,
+            &cfg.user_id_claim,
+            &cfg.username_claim,
+            &cfg.groups_claim,
+        ];
+        for s in fields.into_iter().chain(&cfg.allowed_users) {
+            m.push('\0');
+            m.push_str(s);
+        }
+        m.push('\x01');
+        for s in &cfg.allowed_groups {
             m.push('\0');
             m.push_str(s);
         }
@@ -594,14 +647,31 @@ pub async fn put(
     cfg.client_id = cfg.client_id.trim().to_string();
     cfg.client_secret = cfg.client_secret.trim().to_string();
     cfg.scopes = scopes(&cfg.scopes);
-    cfg.allowed = cfg
-        .allowed
-        .iter()
-        .map(|a| a.trim().to_string())
-        .filter(|a| !a.is_empty())
-        .collect();
+    let defaults = OidcConfig::default();
+    for (v, d) in [
+        (&mut cfg.user_id_claim, defaults.user_id_claim),
+        (&mut cfg.username_claim, defaults.username_claim),
+        (&mut cfg.groups_claim, defaults.groups_claim),
+    ] {
+        *v = v.trim().to_string();
+        if v.is_empty() {
+            *v = d;
+        }
+    }
+    for list in [&mut cfg.allowed_users, &mut cfg.allowed_groups] {
+        *list = list
+            .iter()
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+            .collect();
+    }
     if cfg.client_secret.is_empty() && !body.clear_secret {
-        cfg.client_secret = o.config.lock().unwrap().client_secret.clone();
+        // Only for the same client at the same provider: never hand the
+        // saved secret to an issuer it was not issued by.
+        let old = o.config.lock().unwrap();
+        if same_issuer(&old.issuer, &cfg.issuer) && old.client_id == cfg.client_id {
+            cfg.client_secret = old.client_secret.clone();
+        }
     }
     if !cfg.issuer.is_empty() && !cfg.issuer.starts_with("https://") {
         return Err(ApiError::bad_request("the issuer must be an https:// URL"));
@@ -656,6 +726,53 @@ mod tests {
         let v = decode_jwt_payload(&format!("e30.{p}.sig")).unwrap();
         assert_eq!(v["sub"], "x");
         assert!(decode_jwt_payload("nodots").is_err());
+    }
+
+    fn cfg(users: &[&str], groups: &[&str]) -> OidcConfig {
+        OidcConfig {
+            allowed_users: users.iter().map(|s| s.to_string()).collect(),
+            allowed_groups: groups.iter().map(|s| s.to_string()).collect(),
+            ..OidcConfig::default()
+        }
+    }
+
+    #[test]
+    fn identity_mapping() {
+        let c = json!({"sub":"u1","preferred_username":"alice","groups":["admins","printer"]});
+        let id = identity(&cfg(&[], &[]), &c).unwrap();
+        assert_eq!((id.subject.as_str(), id.name.as_str()), ("u1", "alice"));
+        assert!(identity(&cfg(&["alice"], &[]), &c).is_ok());
+        assert!(identity(&cfg(&["u1"], &[]), &c).is_ok());
+        assert!(identity(&cfg(&[], &["printer"]), &c).is_ok());
+        assert!(identity(&cfg(&["bob"], &["other"]), &c).is_err());
+        // A group name is not a username, and a username is not a group.
+        assert!(identity(&cfg(&["admins"], &[]), &c).is_err());
+        assert!(identity(&cfg(&[], &["alice"]), &c).is_err());
+        assert!(identity(&cfg(&[], &[]), &json!({"preferred_username":"x"})).is_err());
+    }
+
+    #[test]
+    fn identity_custom_claims() {
+        let mut k = cfg(&[], &["printer"]);
+        k.username_claim = "name".into();
+        k.groups_claim = "realm_access.roles".into();
+        let c = json!({"sub":"u","name":"Al","realm_access":{"roles":["printer"]}});
+        assert_eq!(identity(&k, &c).unwrap().name, "Al");
+        k.groups_claim = "https://example.com/groups".into();
+        let c = json!({"sub":"u","https://example.com/groups":"printer"});
+        assert!(identity(&k, &c).is_ok());
+    }
+
+    #[test]
+    fn identity_email_needs_verification() {
+        let mut k = cfg(&["a@example.com"], &[]);
+        k.username_claim = "email".into();
+        let c = json!({"sub":"u","email":"a@example.com"});
+        assert!(identity(&k, &c).is_err());
+        let c = json!({"sub":"u","email":"a@example.com","email_verified":false});
+        assert!(identity(&k, &c).is_err());
+        let c = json!({"sub":"u","email":"a@example.com","email_verified":true});
+        assert!(identity(&k, &c).is_ok());
     }
 
     #[test]

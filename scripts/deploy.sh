@@ -25,7 +25,7 @@ SSH=(ssh -o ConnectTimeout=10 "$HOST")
 [ -f "$WEB/index.html" ] || { echo "missing $WEB/index.html; build the web UI first" >&2; exit 1; }
 
 echo "==> binary"
-"${SSH[@]}" "mkdir -p $BASE/state && cat > $BASE/orcax1d.new && mv $BASE/orcax1d.new $BASE/orcax1d" < "$BIN"
+"${SSH[@]}" "mkdir -p $BASE && cat > $BASE/orcax1d.new && mv $BASE/orcax1d.new $BASE/orcax1d" < "$BIN"
 
 echo "==> web UI"
 tar -C "$WEB" -cf - . | "${SSH[@]}" "rm -rf $BASE/www.new && mkdir -p $BASE/www.new && tar -xf - -C $BASE/www.new && rm -rf $BASE/www && mv $BASE/www.new $BASE/www"

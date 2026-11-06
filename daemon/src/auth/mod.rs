@@ -282,8 +282,7 @@ impl Auth {
     }
 }
 
-/// Middleware for everything under /api except the auth endpoints and the
-/// CA download.
+/// Middleware for everything under /api except the auth endpoints.
 pub async fn require(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
     if !app.auth.enabled() || app.auth.session(req.headers()).is_some() {
         return next.run(req).await;
