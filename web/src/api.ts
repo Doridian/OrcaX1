@@ -162,3 +162,32 @@ export async function registerAcmeAccount(): Promise<AcmeView> {
 export async function deleteAcmeCert(): Promise<AcmeView> {
   return (await check(await fetch(api('acme/cert'), { method: 'DELETE' }))).json()
 }
+
+export interface OidcConfig {
+  enabled: boolean
+  label: string
+  issuer: string
+  client_id: string
+  /** Always empty when read back; see `OidcView.secret_set`. */
+  client_secret: string
+  scopes: string
+  allowed: string[]
+}
+export interface OidcView {
+  config: OidcConfig
+  secret_set: boolean
+  /** false when `--auth` leaves out `oidc`. */
+  available: boolean
+  callback_path: string
+}
+
+export async function getOidc(): Promise<OidcView> {
+  return (await check(await fetch(api('oidc')))).json()
+}
+
+/** An empty client_secret keeps the saved one unless `clearSecret`. */
+export async function saveOidc(config: OidcConfig, clearSecret = false): Promise<OidcView> {
+  return (await check(await fetch(api('oidc'), {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ config, clear_secret: clearSecret }),
+  }))).json()
+}

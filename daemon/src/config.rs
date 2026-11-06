@@ -121,12 +121,13 @@ pub struct Config {
     pub webrtc_port: u16,
 
     /// Login methods, comma-separated: `access-code` (the printer's LAN
-    /// access code), or `none` to disable authentication.
+    /// access code), `oidc` (OpenID Connect, offered once set up under
+    /// Settings), or `none` to disable authentication.
     #[arg(
         long,
         env = "ORCAX1D_AUTH",
         value_delimiter = ',',
-        default_value = "access-code"
+        default_value = "access-code,oidc"
     )]
     pub auth: Vec<String>,
 
@@ -134,10 +135,11 @@ pub struct Config {
     #[arg(long, env = "ORCAX1D_SESSION_DAYS", default_value_t = 30)]
     pub session_days: u32,
 
-    /// Extra PEM CA certificates to trust for ACME and DNS provider APIs
-    /// (e.g. a private step-ca), on top of the bundled Mozilla roots.
-    #[arg(long, env = "ORCAX1D_ACME_CA_FILE")]
-    pub acme_ca_file: Option<PathBuf>,
+    /// Extra PEM CA certificates to trust for outgoing HTTPS (ACME, DNS
+    /// provider APIs, the OpenID Connect provider), e.g. a private step-ca,
+    /// on top of the bundled Mozilla roots.
+    #[arg(long = "ca-file", alias = "acme-ca-file", env = "ORCAX1D_CA_FILE")]
+    pub ca_file: Option<PathBuf>,
 
     /// Camera URL (default: rtsps://bblp:<access code>@<mqtt host>:322/streaming/live/1).
     #[arg(long, env = "ORCAX1D_RTSP_URL", hide_env_values = true)]

@@ -24,12 +24,25 @@ function SecretForm({ p }: { p: AuthProvider }) {
   )
 }
 
+/** Set by the daemon when a redirect login (OIDC) fails: `/?login_error=…`. */
+function takeRedirectError(): string | null {
+  const q = new URLSearchParams(location.search)
+  const e = q.get('login_error')
+  if (e === null) return null
+  q.delete('login_error')
+  const rest = q.toString()
+  history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash)
+  return e
+}
+
 export function Login() {
   const providers = auth.value?.providers ?? []
+  const [redirectErr] = useState(takeRedirectError)
   return (
     <div class="login">
       <div class="card">
         <div class="brand">Orca<span>X1</span></div>
+        {redirectErr && <div class="error">Sign-in failed: {redirectErr}</div>}
         {providers.map((p, i) => (
           <>
             {i > 0 && <div class="login-or muted">or</div>}
