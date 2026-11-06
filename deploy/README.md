@@ -3,10 +3,12 @@
 `orcax1d` is a single static ARMv7 binary (`dist/orcax1d-armv7`, about 6 MB)
 that runs on the printer's application processor under
 [X1Plus](https://github.com/X1Plus/X1Plus). It serves the web UI over HTTPS
-on port **443** and redirects plain HTTP on port **8080** to it. The WebRTC
+on port **443** and redirects plain HTTP on ports **80** and **8080** to it. The WebRTC
 camera uses **UDP 8443** (`ORCAX1D_WEBRTC_PORT`). None of these ports is
 used by Bambu's firmware (MQTT 8883, RTSPS 322, FTPS 990, ...) or by
-X1Plus (its own HTTP server is on port 80).
+X1Plus (its own HTTP server is on port 80). If port 80 is already taken,
+the daemon logs a warning and only redirects 8080. `ORCAX1D_REDIRECT_LISTEN`
+(comma-separated) changes the list.
 
 ## Layout on the printer
 
@@ -41,7 +43,10 @@ You need X1Plus with SSH enabled (root login).
    This installs the init script into `/etc/init.d`, (re)starts the daemon,
    checks that it stayed up (printing the log if not), and prints the URL.
 
-To upgrade, unpack a newer zip over the old folder and run `install.sh`
+To upgrade, open Settings → Update in the web UI and upload the new zip. The
+daemon unpacks it into `orcax1/`, checks that the new binary runs, runs
+`install.sh` and restarts (log: `/tmp/orcax1d-update.log`). `state/` and
+`orcax1d.conf` are kept. Or do it by hand: unpack a newer zip over the old folder and run `install.sh`
 again; it also deletes web files left over from the previous release (those
 not in `www.manifest`). To remove OrcaX1, run
 `sh /mnt/sdcard/orcax1/install.sh uninstall`, then delete the folder.

@@ -60,8 +60,9 @@ then over SSH run:
 sh /mnt/sdcard/orcax1/install.sh
 ```
 
-and open the `https://<printer-ip>/` address it prints. Upgrade the same
-way. See [deploy/README.md](deploy/README.md) for details, including the
+and open the `https://<printer-ip>/` address it prints. To upgrade, upload
+a newer zip under Settings → Update (or unpack it and run `install.sh` the same
+way). See [deploy/README.md](deploy/README.md) for details, including the
 certificate warning.
 
 ## Building

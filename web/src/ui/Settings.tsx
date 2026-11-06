@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks'
-import { deleteAcmeCert, getAcme, issueAcme, registerAcmeAccount, saveAcme, type AcmeConfig, type AcmeView } from '../api'
+import { deleteAcmeCert, getAcme, info, issueAcme, registerAcmeAccount, saveAcme, uploadUpdate, type AcmeConfig, type AcmeView, type DaemonInfo } from '../api'
 import { auth, logout } from '../state/auth'
 
 export function Settings() {
@@ -7,6 +7,7 @@ export function Settings() {
     <div class="settings">
       <Account />
       <Certificate />
+      <Update />
     </div>
   )
 }
@@ -215,6 +216,86 @@ function Certificate() {
         Requesting a certificate accepts the CA's terms of service. Credentials are stored on the printer's SD card
         (<code>orcax1/state/acme/</code>); give the DNS credentials as little access as your provider allows.
       </p>
+    </div>
+  )
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+function Update() {
+  const [inf, setInf] = useState<DaemonInfo | null>(null)
+  const [file, setFile] = useState<File | null>(null)
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'restarting'>('idle')
+  const [progress, setProgress] = useState(0)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => { info().then(setInf).catch((e) => setErr(e.message)) }, [])
+
+  const run = async () => {
+    if (!file || !inf) return
+    setErr(null)
+    setMsg(null)
+    setProgress(0)
+    setPhase('uploading')
+    try {
+      const r = await uploadUpdate(file, setProgress)
+      setPhase('restarting')
+      setMsg(`Installed ${r.version || 'the update'}; waiting for the printer to restart OrcaX1…`)
+      // Wait for a daemon with a different boot id, then load the new UI.
+      const deadline = Date.now() + 180e3
+      while (Date.now() < deadline) {
+        await sleep(2000)
+        try {
+          const now = await info()
+          if (now.boot_id !== inf.boot_id) {
+            location.reload()
+            return
+          }
+        } catch { /* restarting */ }
+      }
+      throw new Error(`OrcaX1 did not come back within 3 minutes. Over SSH, check ${r.log || '/tmp/orcax1d-update.log'} and /tmp/orcax1d.log.`)
+    } catch (e: any) {
+      setErr(e?.message ?? String(e))
+      setPhase('idle')
+    }
+  }
+
+  const version = inf ? inf.release ?? `${inf.version} (no release installed)` : '…'
+  return (
+    <div class="card">
+      <h2>Update</h2>
+      <dl class="kv">
+        <dt>Installed version</dt><dd>{version}</dd>
+      </dl>
+      {inf && !inf.update_available ? (
+        <p class="muted small-text">
+          Updating from here needs OrcaX1 installed on the printer with <code>install.sh</code>
+          {inf.mode === 'remote' ? ' (this daemon runs in remote mode)' : ''}.
+        </p>
+      ) : (
+        <>
+          <p class="muted small-text">
+            Upload a release zip (<code>orcax1-&lt;version&gt;.zip</code> from{' '}
+            <a href="https://github.com/Doridian/OrcaX1/releases" target="_blank" rel="noopener">Releases</a>).
+            The printer unpacks it to <code>orcax1/</code> on the SD card, keeping your settings and certificates,
+            and restarts OrcaX1. A running print is not affected.
+          </p>
+          <div class="btnrow">
+            <input type="file" accept=".zip,application/zip" disabled={phase !== 'idle'}
+              onChange={(e) => setFile(e.currentTarget.files?.[0] ?? null)} />
+            <button class="primary" disabled={!file || !inf || phase !== 'idle'} onClick={run}>Install update</button>
+          </div>
+          {phase === 'uploading' && (
+            <>
+              <div class="progress"><div style={{ width: `${Math.round(progress * 100)}%` }} /></div>
+              <div class="muted small-text">{progress < 1 ? `Uploading… ${Math.round(progress * 100)}%` : 'Unpacking and checking…'}</div>
+            </>
+          )}
+          {msg && <div class="muted">{msg}</div>}
+        </>
+      )}
+      {err && <div class="error">{err}</div>}
     </div>
   )
 }

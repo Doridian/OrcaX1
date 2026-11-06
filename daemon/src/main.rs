@@ -10,6 +10,7 @@ mod printer;
 mod static_files;
 mod store;
 mod tls;
+mod update;
 mod util;
 
 use std::net::SocketAddr;
@@ -105,10 +106,17 @@ async fn security_headers(mut res: Response) -> Response {
     res
 }
 
+/// Changes on every start, so the UI can tell when an update restarted us.
+static BOOT_ID: std::sync::LazyLock<u64> =
+    std::sync::LazyLock::new(|| u64::from_le_bytes(util::random_bytes::<8>()) >> 11);
+
 async fn info_handler(State(app): State<Arc<App>>) -> impl IntoResponse {
     axum::Json(json!({
         "name": "orcax1d",
         "version": env!("CARGO_PKG_VERSION"),
+        "release": update::release(&app),
+        "boot_id": *BOOT_ID,
+        "update_available": update::available(&app),
         "serial": app.printer.serial(),
         "mqtt_connected": app.printer.connected(),
         "camera_available": app.camera.available(),
@@ -160,6 +168,10 @@ fn router(app: Arc<App>) -> Router {
             put(files::upload).layer(DefaultBodyLimit::disable()),
         )
         .route("/api/print", post(printer::print))
+        .route(
+            "/api/update",
+            post(update::upload).layer(DefaultBodyLimit::disable()),
+        )
         .route("/api/acme", get(acme::get).put(acme::put))
         .route("/api/acme/issue", post(acme::issue))
         .route("/api/acme/account", post(acme::account))
@@ -411,17 +423,22 @@ async fn run(mut cfg: Config) -> Result<(), String> {
     tokio::spawn(serve(main_listener, router(app), acceptor.clone()));
 
     if acceptor.is_some() && !cfg.no_redirect {
-        match bind(cfg.redirect_listen).await {
-            Ok(l) => {
-                info!("redirecting http://{} to https", cfg.redirect_listen);
-                let r = Router::new()
-                    .fallback(redirect_handler)
-                    .with_state(cfg.listen.port())
-                    .layer(axum::middleware::map_response(security_headers));
-                tokio::spawn(serve(l, r, None));
+        let r = Router::new()
+            .fallback(redirect_handler)
+            .with_state(cfg.listen.port())
+            .layer(axum::middleware::map_response(security_headers));
+        for &addr in &cfg.redirect_listen {
+            if addr == cfg.listen {
+                continue;
             }
-            // Not fatal: the main listener is what matters.
-            Err(e) => warn!("redirect listener disabled: {e}"),
+            match bind(addr).await {
+                Ok(l) => {
+                    info!("redirecting http://{addr} to https");
+                    tokio::spawn(serve(l, r.clone(), None));
+                }
+                // Not fatal: the main listener is what matters.
+                Err(e) => warn!("redirect listener disabled: {e}"),
+            }
         }
     }
 
