@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'preact/hooks'
 import { deleteFile, downloadUrl, listFiles, startPrint, type FileEntry } from '../../api'
-import { filamentForTray } from '../../slicer/profiles'
 import { cmd, commandLog, gcodeState, isPrinting, mqttConnected, status } from '../../state/printer'
 import { bundle, sel } from '../../state/settings'
-import { trayColor } from '../Sidebar'
+import { ask } from '../../state/confirm'
+import { EXTERNAL, trayColor } from '../../state/hardware'
+import { confirmTrayEdit } from '../hardwareEdits'
 import { fmtTime } from '../Workspace'
 import { Camera } from './Camera'
 
@@ -73,7 +74,7 @@ function Job() {
       <div class="btnrow">
         <button disabled={!mqttConnected.value || st !== 'RUNNING'} onClick={cmd.pause}>Pause</button>
         <button disabled={!mqttConnected.value || st !== 'PAUSE'} onClick={cmd.resume}>Resume</button>
-        <button class="danger" disabled={!mqttConnected.value || !isPrinting.value} onClick={() => { if (confirm('Stop the current print?')) cmd.stop() }}>Stop</button>
+        <button class="danger" disabled={!mqttConnected.value || !isPrinting.value} onClick={async () => { if (await ask({ title: 'Stop the current print?', body: 'The print is cancelled and cannot be resumed.', confirm: 'Stop print', danger: true })) cmd.stop() }}>Stop</button>
         <select disabled={!mqttConnected.value} value={String(s.spd_lvl ?? 2)} onChange={(e) => cmd.speed(+e.currentTarget.value)}>
           {[1, 2, 3, 4].map((l) => <option value={l}>{speedNames[l]}</option>)}
         </select>
@@ -240,22 +241,12 @@ function inkFor(hex: string) {
 function TrayEditor({ ams, tray, t, onClose, onLoad }: { ams: number; tray: number; t: any; onClose: () => void; onLoad: () => void }) {
   const b = bundle.value
   const fils = b ? b.filaments.filter((f) => f.compatible.includes(sel.value.printer) && f.filament_id) : []
-  const current = b ? filamentForTray(b, sel.value.printer, String(t.tray_info_idx ?? ''), String(t.tray_type ?? '')) : undefined
-  const [preset, setPreset] = useState(current?.name ?? fils[0]?.name ?? '')
+  const id = ams === 255 ? EXTERNAL : ams * 4 + tray
+  // Same preset the slicer shows for this tray.
+  const current = sel.value.filaments.find((f) => f.tray === id && !f.empty)?.preset
+  const [preset, setPreset] = useState(current ?? fils[0]?.name ?? '')
   const [color, setColor] = useState(t.tray_type ? trayColor(t) : '#FFFFFF')
-  const save = () => {
-    const f = fils.find((x) => x.name === preset)
-    if (!f) return
-    const temp = f.settings.nozzle_temperature_range_low, tmax = f.settings.nozzle_temperature_range_high
-    cmd.amsSetTray(ams, tray, {
-      tray_info_idx: f.filament_id ?? '',
-      tray_color: color.slice(1).toUpperCase() + 'FF',
-      tray_type: f.type ?? 'PLA',
-      nozzle_temp_min: Number(Array.isArray(temp) ? temp[0] : temp ?? 190),
-      nozzle_temp_max: Number(Array.isArray(tmax) ? tmax[0] : tmax ?? 240),
-    })
-    onClose()
-  }
+  const save = async () => { if (await confirmTrayEdit({ id, amsId: ams, slot: tray }, preset, color)) onClose() }
   return (
     <div style={{ marginTop: '8px', borderTop: '1px solid var(--border)', paddingTop: '8px' }}>
       <div class="group-title">{ams === 255 ? 'External spool' : `AMS ${ams + 1} slot ${tray + 1}`}</div>
@@ -286,7 +277,7 @@ function Files() {
   useEffect(() => { refresh() }, [dir])
   const join = (n: string) => (dir ? `${dir}/${n}` : n)
   const print = async (path: string) => {
-    if (!confirm(`Print ${path}? (plate 1, AMS mapping in file order)`)) return
+    if (!await ask({ title: `Print ${path}?`, body: 'Plate 1, with filaments mapped to AMS trays in file order.', confirm: 'Print' })) return
     try {
       await startPrint({ path, plate: 1, use_ams: true, ams_mapping: [], timelapse: false, bed_leveling: true, flow_cali: false, vibration_cali: false, layer_inspect: false, bed_type: 'auto' })
     } catch (e: any) { setErr(e?.message ?? String(e)) }
@@ -309,7 +300,7 @@ function Files() {
               <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
                 {!e.is_dir && /\.3mf$/i.test(e.name) && <button class="small" disabled={!mqttConnected.value || isPrinting.value} onClick={() => print(join(e.name))}>Print</button>}{' '}
                 {!e.is_dir && <a href={downloadUrl(join(e.name))}><button class="small">↓</button></a>}{' '}
-                <button class="small danger" onClick={async () => { if (confirm(`Delete ${join(e.name)}?`)) { try { await deleteFile(join(e.name)); refresh() } catch (x: any) { setErr(String(x?.message ?? x)) } } }}>×</button>
+                <button class="small danger" onClick={async () => { if (await ask({ title: `Delete ${join(e.name)}?`, confirm: 'Delete', danger: true })) { try { await deleteFile(join(e.name)); refresh() } catch (x: any) { setErr(String(x?.message ?? x)) } } }}>×</button>
               </td>
             </tr>
           ))}

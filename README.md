@@ -32,14 +32,17 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
 * Printer / process / filament presets from OrcaSlicer's BBL profiles
   (X1, X1C, X1E, all nozzle sizes), curated process settings plus a raw
   editor for every key, persisted in the browser.
-* Multi-filament: per-object filament, "Sync AMS" fills the filament list
-  from the AMS trays (matched by Bambu filament id), and flush volumes are
-  computed from the colors.
+* The slicer mirrors the printer: the filament list is the AMS trays and
+  external spool (one slot per tray, matched by Bambu filament id), and the
+  nozzle size and type are the ones the printer reports. Changing a filament
+  or the nozzle in the slicer writes it to the printer after a confirmation.
+* Multi-filament: per-object filament, flush volumes computed from the
+  colors.
 * Slicing with progress and cancel; toolpath preview by line type or
   filament, with a layer range slider; time, weight and cost stats.
 * Printing: exports a Bambu `.gcode.3mf` (plate G-code, thumbnails, and the
   slice_info the firmware reads), uploads it to the SD card, and starts it
-  with AMS mapping, bed leveling, flow calibration and timelapse options.
+  with each filament printed from its own tray, bed leveling, flow calibration and timelapse options.
 * Login with the printer's LAN access code or single sign-on through an
   OpenID Connect provider (Kanidm, Authelia, Keycloak, …), and an optional browser-trusted certificate from
   Let's Encrypt or any ACME CA via DNS-01 (Cloudflare, RFC 2136 / TSIG,

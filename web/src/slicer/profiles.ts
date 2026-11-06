@@ -156,6 +156,10 @@ export interface FilamentSlot {
   preset: string
   color: string // #RRGGBB
   overrides?: Overrides
+  /** Printer tray this slot mirrors: AMS unit * 4 + slot, or 254 for the external spool. */
+  tray?: number
+  /** No spool in that tray (the preset is a placeholder). */
+  empty?: boolean
 }
 
 export interface Selection {

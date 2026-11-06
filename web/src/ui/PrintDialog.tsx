@@ -1,34 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { mqttConnected, status } from '../state/printer'
+import { useEffect, useRef, useState } from 'preact/hooks'
+import { EXTERNAL, trayName } from '../state/hardware'
+import { mqttConnected } from '../state/printer'
 import { currentPlate, objects } from '../state/project'
 import { bundle, sel } from '../state/settings'
 import { finalizeBambu3mf, type PlateInfo } from '../slicer/bambu3mf'
 import type { Progress } from '../slicer/engine'
 import { exportPrintable, plates } from '../state/slice'
 import { uploadFile, startPrint } from '../api'
-import { trayColor } from './Sidebar'
 import { sceneView } from './Workspace'
-
-interface Tray { id: number; label: string; color: string; type: string }
-
-function trays(): Tray[] {
-  const st = status.value
-  const out: Tray[] = []
-  for (const unit of st.ams?.ams ?? []) {
-    for (const t of unit.tray ?? []) {
-      if (!t.tray_type) continue
-      out.push({ id: Number(unit.id) * 4 + Number(t.id), label: `AMS ${Number(unit.id) + 1} slot ${Number(t.id) + 1}`, color: trayColor(t), type: String(t.tray_type) })
-    }
-  }
-  if (st.vt_tray?.tray_type) out.push({ id: 254, label: 'External spool', color: trayColor(st.vt_tray), type: String(st.vt_tray.tray_type) })
-  return out
-}
-
-function colorDist(a: string, b: string) {
-  const p = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
-  const x = p(a), y = p(b)
-  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2])
-}
 
 /** Engine export + Bambu metadata (thumbnails, slice_info) for the printer. */
 async function buildPrintable(onProgress?: (p: Progress) => void): Promise<Uint8Array> {
@@ -60,27 +39,21 @@ export function PrintDialog({ onClose }: { onClose: () => void }) {
   const printing: number[] = sliced?.statistics?.printingExtruders ?? used
   const needed = [...new Set([...used, ...printing])].sort((a, b) => a - b)
 
-  const available = trays()
-  const auto = useMemo(() => {
-    const m: Record<number, number> = {}
-    const taken = new Set<number>()
-    for (const i of needed) {
-      const f = fils[i]
-      if (!f) continue
-      const type = f.preset.match(/(PLA|PETG|ABS|ASA|TPU|PA|PC|PET|PVA|HIPS)/i)?.[1]?.toUpperCase()
-      const cands = available
-        .filter((t) => !taken.has(t.id))
-        .sort((a, b) => (Number(b.type.toUpperCase().startsWith(type ?? '~')) - Number(a.type.toUpperCase().startsWith(type ?? '~'))) || colorDist(a.color, f.color) - colorDist(b.color, f.color))
-      if (cands[0]) { m[i] = cands[0].id; taken.add(cands[0].id) }
-    }
-    return m
-  }, [plate, available.map((t) => t.id + t.color).join(), fils.map((f) => f.color + f.preset).join()])
-  const [mapping, setMapping] = useState<Record<number, number>>({})
-  const effective = { ...auto, ...mapping }
+  // Slots mirror the printer's trays, so the mapping is fixed: slot i prints from its tray.
+  const problems: string[] = []
+  for (const i of needed) {
+    const f = fils[i]
+    if (!f) problems.push(`Filament ${i + 1} doesn't exist.`)
+    else if (f.tray === undefined) problems.push(`Filament ${i + 1} isn't linked to a printer tray yet (waiting for the printer).`)
+    else if (f.empty) problems.push(`Filament ${i + 1} (${trayName(f.tray)}) is empty.`)
+  }
+  const external = needed.filter((i) => fils[i]?.tray === EXTERNAL)
+  if (external.length && external.length !== needed.length) problems.push('The external spool and AMS trays can\'t be used in the same print.')
+  const useAms = !external.length
 
   const baseName = (objects.value.find((o) => o.plate === plate)?.name ?? 'print').replace(/[^\w.\- ]+/g, '_').slice(0, 60)
   const [name, setName] = useState(baseName)
-  const [opts, setOpts] = useState({ bed_leveling: true, flow_cali: false, timelapse: false, vibration_cali: false, layer_inspect: false, use_ams: available.some((t) => t.id !== 254) })
+  const [opts, setOpts] = useState({ bed_leveling: true, flow_cali: false, timelapse: false, vibration_cali: false, layer_inspect: false })
   const [phase, setPhase] = useState<string | null>(null)
   const [pct, setPct] = useState(0)
   const [err, setErr] = useState<string | null>(null)
@@ -110,8 +83,7 @@ export function PrintDialog({ onClose }: { onClose: () => void }) {
       await uploadFile(path, bytes, (f) => setPct(Math.round(f * 100)))
       if (andPrint) {
         setPhase('Starting print…')
-        const ams_mapping = fils.map((_, i) => (needed.includes(i) ? (effective[i] ?? -1) : -1))
-        const useAms = opts.use_ams && needed.every((i) => effective[i] !== undefined && effective[i] !== 254)
+        const ams_mapping = fils.map((f, i) => (needed.includes(i) ? f.tray ?? -1 : -1))
         await startPrint({
           path,
           plate: plate + 1,
@@ -142,28 +114,24 @@ export function PrintDialog({ onClose }: { onClose: () => void }) {
         <div class="row"><label>File name</label><div class="control"><input type="text" value={name} onInput={(e) => setName(e.currentTarget.value)} /><span class="unit">.gcode.3mf</span></div></div>
         {usedPlates.length > 1 && (
           <div class="row"><label>Plate to print</label><div class="control">
-            <select value={String(plate)} onChange={(e) => { setPlate(+e.currentTarget.value); setMapping({}) }}>
+            <select value={String(plate)} onChange={(e) => setPlate(+e.currentTarget.value)}>
               {usedPlates.map((p) => <option value={p}>Plate {p + 1}</option>)}
             </select>
           </div></div>
         )}
-        <div class="group-title">Filament mapping</div>
-        {available.length === 0 && <div class="muted small-text">No AMS or external spool information from the printer.</div>}
+        <div class="group-title">Filaments</div>
         <div class="mapping">
           {needed.map((i) => (
             <>
-              <span class="swatch" style={{ background: fils[i]?.color }} />
+              <span class="swatch" style={{ background: fils[i]?.empty ? 'transparent' : fils[i]?.color }} />
               <span title={fils[i]?.preset}>{i + 1}: {fils[i]?.preset.replace(/ @.*$/, '')}</span>
               <span>→</span>
-              <select value={String(effective[i] ?? '')} onChange={(e) => setMapping({ ...mapping, [i]: +e.currentTarget.value })}>
-                <option value="">(none)</option>
-                {available.map((t) => <option value={t.id}>{t.label}: {t.type}</option>)}
-              </select>
+              <span>{trayName(fils[i]?.tray)}</span>
             </>
           ))}
         </div>
+        {problems.map((p) => <div class="warning small-text">{p}</div>)}
         <div class="group-title">Options</div>
-        {check('use_ams', 'Use AMS')}
         {check('bed_leveling', 'Bed leveling')}
         {check('flow_cali', 'Flow dynamics calibration')}
         {check('vibration_cali', 'Vibration compensation calibration')}
@@ -181,7 +149,7 @@ export function PrintDialog({ onClose }: { onClose: () => void }) {
         <button onClick={() => ref.current?.close()} disabled={!!phase}>Cancel</button>
         <button onClick={download} disabled={!!phase}>Download</button>
         <button onClick={() => send(false)} disabled={!!phase}>Upload only</button>
-        <button class="primary" onClick={() => send(true)} disabled={!!phase || !mqttConnected.value}>Print</button>
+        <button class="primary" onClick={() => send(true)} disabled={!!phase || !mqttConnected.value || problems.length > 0}>Print</button>
       </footer>
     </dialog>
   )

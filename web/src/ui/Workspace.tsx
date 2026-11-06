@@ -9,6 +9,8 @@ import {
   activeTool, patchObjects, translated, rotated, scaled, layOnFace, type ModelObject,
 } from '../state/project'
 import { bed, sel } from '../state/settings'
+import { trayShort } from '../state/hardware'
+import { ask } from '../state/confirm'
 import {
   arrange, autoOrient, cancelSlice, isStale, plates, sliceAll, sliceError, sliceProgress, sliceStatus,
 } from '../state/slice'
@@ -154,7 +156,7 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
                 <button onClick={() => fileInput.current!.click()} title="Import models">Import</button>
                 <button disabled={!selection.value.length} onClick={() => duplicateObjects(selection.value)} title="Duplicate">Duplicate</button>
                 <button disabled={!selection.value.length} onClick={() => removeObjects(selection.value)} title="Delete (Del)">Delete</button>
-                <button disabled={!objects.value.length} onClick={() => { if (confirm('Remove all objects?')) clearProject() }}>Clear</button>
+                <button disabled={!objects.value.length} onClick={async () => { if (await ask({ title: 'Remove all objects?', confirm: 'Remove', danger: true })) clearProject() }}>Clear</button>
                 <button disabled={!canUndo.value} onClick={undo} title="Undo (Ctrl+Z)">Undo</button>
                 <button disabled={!canRedo.value} onClick={redo} title="Redo (Ctrl+Shift+Z / Ctrl+Y)">Redo</button>
               </div>
@@ -307,7 +309,7 @@ function ObjectsPanel() {
             <label>Filament</label>
             <div class="control">
               <select value={String(selObjs[0].filament)} onChange={(e) => patchObjects(new Map(selObjs.map((ob) => [ob.id, { filament: +e.currentTarget.value }])))}>
-                {fils.map((f, i) => <option value={i}>{i + 1}: {f.preset.replace(/ @.*$/, '')}</option>)}
+                {fils.map((f, i) => <option value={i}>{i + 1} · {trayShort(f.tray)}: {f.empty ? 'empty' : f.preset.replace(/ @.*$/, '')}</option>)}
               </select>
             </div>
           </div>

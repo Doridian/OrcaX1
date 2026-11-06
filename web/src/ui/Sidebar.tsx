@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'preact/hooks'
-import { BED_TYPES, filamentForTray, type FilamentSlot } from '../slicer/profiles'
+import { BED_TYPES, type FilamentSlot } from '../slicer/profiles'
 import { TABS, type Field } from '../slicer/schema'
-import { status } from '../state/printer'
 import {
-  bundle, bundleError, currentProcess, filamentList, processList, processValue, sel, setFilaments,
-  setPrinter, setProcessOverride, updateSel,
+  canEditTray, EXTERNAL, nozzle, NOZZLE_TYPES, pendingNozzle, pendingTrays, setModel, trayName, trays,
+} from '../state/hardware'
+import { mqttConnected } from '../state/printer'
+import { confirmNozzleEdit, confirmTrayEdit } from './hardwareEdits'
+import {
+  bundle, bundleError, currentProcess, filamentList, processList, processValue, sel, setProcessOverride, updateSel,
 } from '../state/settings'
-import { objects, touch } from '../state/project'
 
 export function Sidebar() {
   return (
@@ -24,15 +26,51 @@ export function Sidebar() {
   )
 }
 
+/** Puts a control back to its old value if the change was cancelled (the printer's state is authoritative). */
+function revertUnless(el: HTMLInputElement | HTMLSelectElement, old: string, done: Promise<boolean>) {
+  done.then((ok) => { if (!ok) el.value = old })
+}
+
 function PrinterSection() {
   const b = bundle.value!
   const s = sel.value
+  const cur = b.printers.find((p) => p.name === s.printer)
+  const models = [...new Set(b.printers.map((p) => p.model))]
+  const diameters = [...new Set(b.printers.filter((p) => p.model === cur?.model).map((p) => Number(p.nozzle)))].sort((x, y) => x - y)
+  const n = nozzle.value
+  const online = mqttConnected.value
+  const pend = pendingNozzle.value
+  const nozzleType = n?.type ?? String((s.printerOverrides.nozzle_type as string[] | undefined)?.[0] ?? '')
+  // While an edit is in flight, show what was sent.
+  const shown = pend ?? { diameter: n?.diameter ?? Number(cur?.nozzle), type: nozzleType }
+  const known = NOZZLE_TYPES.some(([v]) => v === shown.type)
   return (
     <div class="section">
       <h3>Printer</h3>
-      <select class="full" value={s.printer} onChange={(e) => setPrinter(e.currentTarget.value)}>
-        {b.printers.map((p) => <option value={p.name}>{p.name}</option>)}
+      <select class="full" value={cur?.model} onChange={(e) => setModel(e.currentTarget.value)}>
+        {models.map((m) => <option value={m}>{m}</option>)}
       </select>
+      <div class="row">
+        <label title="Reported by the printer; changing it updates the printer">Nozzle</label>
+        <div class="control">
+          <select value={String(shown.diameter)} disabled={!n || !online || !!pend}
+            onChange={(e) => revertUnless(e.currentTarget, String(shown.diameter), confirmNozzleEdit(+e.currentTarget.value, known ? nozzleType : 'hardened_steel'))}>
+            {diameters.map((d) => <option value={String(d)}>{d} mm</option>)}
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <label title="Reported by the printer; changing it updates the printer">Nozzle type</label>
+        <div class="control">
+          <select value={shown.type} disabled={!n || !online || !!pend}
+            onChange={(e) => revertUnless(e.currentTarget, shown.type, confirmNozzleEdit(shown.diameter, e.currentTarget.value))}>
+            {!known && <option value={shown.type}>{shown.type || '?'}</option>}
+            {NOZZLE_TYPES.map(([v, l]) => <option value={v}>{l}</option>)}
+          </select>
+        </div>
+      </div>
+      {pend && <div class="muted small-text">Waiting for the printer to confirm the nozzle…</div>}
+      {!n && <div class="muted small-text">Waiting for the printer to report its nozzle.</div>}
       <div class="row">
         <label>Plate type</label>
         <div class="control">
@@ -58,32 +96,16 @@ function PrinterSection() {
   )
 }
 
-function trayList(): { id: number; label: string; tray: any }[] {
-  const st = status.value
-  const out: { id: number; label: string; tray: any }[] = []
-  for (const unit of st.ams?.ams ?? []) {
-    for (const tray of unit.tray ?? []) {
-      if (!tray.tray_type) continue
-      const id = Number(unit.id) * 4 + Number(tray.id)
-      out.push({ id, label: `AMS ${Number(unit.id) + 1}-${Number(tray.id) + 1}`, tray })
-    }
-  }
-  if (st.vt_tray?.tray_type) out.push({ id: 254, label: 'External', tray: st.vt_tray })
-  return out
-}
-
-export function trayColor(tray: any): string {
-  const c = String(tray?.tray_color ?? '').slice(0, 6)
-  return /^[0-9a-fA-F]{6}$/.test(c) ? `#${c.toUpperCase()}` : '#888888'
-}
-
 function FilamentSection() {
   const s = sel.value
   const fils = filamentList.value
-  const trays = trayList()
+  const list = trays.value
+  const online = mqttConnected.value
+  const pend = pendingTrays.value
   const grouped = useMemo(() => {
     const m = new Map<string, string[]>()
     for (const f of fils) {
+      if (!f.filament_id) continue // the printer can only store presets with a Bambu filament id
       const v = f.vendor ?? 'Other'
       if (!m.has(v)) m.set(v, [])
       m.get(v)!.push(f.name)
@@ -91,43 +113,52 @@ function FilamentSection() {
     return [...m.entries()].sort(([a], [b]) => (a === 'Bambu Lab' ? -1 : b === 'Bambu Lab' ? 1 : a === 'Generic' ? -1 : b === 'Generic' ? 1 : a.localeCompare(b)))
   }, [fils])
 
-  const update = (i: number, patch: Partial<FilamentSlot>) =>
-    setFilaments(s.filaments.map((f, j) => (j === i ? { ...f, ...patch } : f)))
-  const remove = (i: number) => {
-    setFilaments(s.filaments.filter((_, j) => j !== i))
-    // Objects on the removed slot fall back to slot 1; later slots shift down.
-    objects.value = objects.value.map((o) => (o.filament === i ? { ...o, filament: 0, rev: o.rev + 1 } : o.filament > i ? { ...o, filament: o.filament - 1, rev: o.rev + 1 } : o))
-    touch()
-  }
-  const syncFromAms = () => {
-    const b = bundle.value!
-    const slots: FilamentSlot[] = trays.map(({ tray }) => {
-      const preset = filamentForTray(b, s.printer, String(tray.tray_info_idx ?? ''), String(tray.tray_type ?? ''))
-      return { preset: preset?.name ?? s.filaments[0].preset, color: trayColor(tray) }
-    })
-    if (slots.length) setFilaments(slots)
-  }
+  // One group per AMS unit, then the external spool.
+  const groups: { title: string; items: { f: FilamentSlot; i: number }[] }[] = []
+  s.filaments.forEach((f, i) => {
+    const title = f.tray === undefined ? 'Filaments' : f.tray === EXTERNAL ? 'External spool' : `AMS ${Math.floor(f.tray / 4) + 1}`
+    const g = groups[groups.length - 1]
+    if (g?.title === title) g.items.push({ f, i })
+    else groups.push({ title, items: [{ f, i }] })
+  })
 
   return (
     <div class="section">
-      <h3>
-        Filaments <span class="spacer" />
-        <button class="small" disabled={!trays.length} onClick={syncFromAms} title="Replace the list with what is loaded in the AMS">Sync AMS</button>
-        <button class="small" disabled={s.filaments.length >= 16} onClick={() => setFilaments([...s.filaments, { ...s.filaments[s.filaments.length - 1] }])}>+</button>
-      </h3>
-      {s.filaments.map((f, i) => (
-        <div class="filament-slot">
-          <span class="slot-num">{i + 1}</span>
-          <span class="swatch" style={{ background: f.color }}>
-            <input type="color" value={f.color} onInput={(e) => update(i, { color: e.currentTarget.value.toUpperCase() })} />
-          </span>
-          <select value={f.preset} onChange={(e) => update(i, { preset: e.currentTarget.value })} title={f.preset}>
-            {!fils.some((x) => x.name === f.preset) && <option value={f.preset}>{f.preset} (incompatible)</option>}
-            {grouped.map(([vendor, names]) => (
-              <optgroup label={vendor}>{names.map((n) => <option value={n}>{n}</option>)}</optgroup>
-            ))}
-          </select>
-          <button class="small icon" disabled={s.filaments.length <= 1} onClick={() => remove(i)} title="Remove">×</button>
+      <h3>Filaments</h3>
+      {!list && <div class="muted small-text">Waiting for the printer to report its AMS; showing the last known filaments.</div>}
+      {list && !online && <div class="muted small-text">Printer offline; filaments can't be changed.</div>}
+      {groups.map((g) => (
+        <div class="filament-group">
+          <div class="group-title">{g.title}</div>
+          {g.items.map(({ f, i }) => {
+            const t = list?.find((x) => x.id === f.tray)
+            const editable = canEditTray(t) && !pend[t.id]
+            const ext = f.tray === EXTERNAL
+            return (
+              <div class={`filament-slot${f.empty ? ' empty' : ''}`} title={trayName(f.tray)}>
+                <span class="slot-num">{i + 1}</span>
+                <span class="swatch" style={{ background: f.empty ? 'transparent' : f.color }}>
+                  {editable && !f.empty && (
+                    <input type="color" value={f.color}
+                      onChange={(e) => revertUnless(e.currentTarget, f.color, confirmTrayEdit(t, f.preset, e.currentTarget.value))} />
+                  )}
+                </span>
+                {f.empty && !ext
+                  ? <span class="muted empty-label">Empty</span>
+                  : (
+                    <select value={f.empty ? '' : f.preset} disabled={!editable} title={f.preset}
+                      onChange={(e) => revertUnless(e.currentTarget, f.empty ? '' : f.preset, confirmTrayEdit(t!, e.currentTarget.value, f.empty ? '#FFFFFF' : f.color))}>
+                      {f.empty && <option value="">Not set</option>}
+                      {!f.empty && !fils.some((x) => x.name === f.preset) && <option value={f.preset}>{f.preset} (incompatible)</option>}
+                      {grouped.map(([vendor, names]) => (
+                        <optgroup label={vendor}>{names.map((n) => <option value={n}>{n}</option>)}</optgroup>
+                      ))}
+                    </select>
+                  )}
+                {t && pend[t.id] && <span class="muted small-text" title="Waiting for the printer to confirm">…</span>}
+              </div>
+            )
+          })}
         </div>
       ))}
     </div>

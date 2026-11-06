@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals'
 import { gcodeState, mqttConnected, serial, status, wsConnected } from '../state/printer'
+import { ConfirmHost } from './Confirm'
 import { Device } from './device/Device'
 import { Settings } from './Settings'
 import { Sidebar } from './Sidebar'
@@ -48,6 +49,7 @@ export function App() {
         <Sidebar />
         <Workspace mode={page.value === 'preview' ? 'preview' : 'prepare'} />
       </div>
+      <ConfirmHost />
     </div>
   )
 }
