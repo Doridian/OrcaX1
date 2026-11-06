@@ -32,7 +32,18 @@ export function Device() {
 
 function LightToggle() {
   const on = (status.value.lights_report ?? []).some((l: any) => l.node === 'chamber_light' && l.mode === 'on')
-  return <button class="small" disabled={!mqttConnected.value} onClick={() => cmd.light('chamber_light', !on)}>Light {on ? 'off' : 'on'}</button>
+  // The bulb shows the light's reported state; clicking flips it.
+  return (
+    <button
+      class={`small lightbulb${on ? ' on' : ''}`}
+      aria-pressed={on}
+      title={`Chamber light is ${on ? 'on' : 'off'} (click to turn ${on ? 'off' : 'on'})`}
+      disabled={!mqttConnected.value}
+      onClick={() => cmd.light('chamber_light', !on)}
+    >
+      <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z" /></svg>
+    </button>
+  )
 }
 
 const STAGES: Record<number, string> = {
@@ -102,7 +113,6 @@ function TempBox({ label, cur, target, onSet }: { label: string; cur: any; targe
 
 function Temps() {
   const s = status.value
-  const fan = (v: any) => `${Math.round((Number(v ?? 0) / 15) * 100)}%`
   return (
     <div class="card">
       <h2>Temperatures &amp; fans</h2>
@@ -112,20 +122,45 @@ function Temps() {
         <TempBox label="Chamber" cur={s.chamber_temper} />
       </div>
       <dl class="kv" style={{ marginTop: '8px' }}>
-        <dt>Part fan</dt><dd>{fan(s.cooling_fan_speed)} <FanButtons p={1} /></dd>
-        <dt>Aux fan</dt><dd>{fan(s.big_fan1_speed)} <FanButtons p={2} /></dd>
-        <dt>Chamber fan</dt><dd>{fan(s.big_fan2_speed)} <FanButtons p={3} /></dd>
-        <dt>Heatbreak fan</dt><dd>{fan(s.heatbreak_fan_speed)}</dd>
+        <dt>Part fan</dt><dd><FanSlider p={1} speed={s.cooling_fan_speed} /></dd>
+        <dt>Aux fan</dt><dd><FanSlider p={2} speed={s.big_fan1_speed} /></dd>
+        <dt>Chamber fan</dt><dd><FanSlider p={3} speed={s.big_fan2_speed} /></dd>
+        <dt>Heatbreak fan</dt><dd>{fanPct(s.heatbreak_fan_speed)}%</dd>
       </dl>
     </div>
   )
 }
 
-function FanButtons({ p }: { p: number }) {
-  const set = (pct: number) => cmd.gcode(`M106 P${p} S${Math.round((pct / 100) * 255)}`)
+// The printer reports fan speeds in 16 steps (0-15).
+const fanPct = (v: any) => Math.round((Number(v ?? 0) / 15) * 100)
+
+// Shows the reported fan speed. While dragging, and after release until the
+// printer reports a new speed (or a few seconds pass), it shows the chosen value.
+function FanSlider({ p, speed }: { p: number; speed: any }) {
+  const reported = fanPct(speed)
+  const [pending, setPending] = useState<number | null>(null)
+  const [dragging, setDragging] = useState(false)
+  useEffect(() => { if (!dragging) setPending(null) }, [reported])
+  useEffect(() => {
+    if (pending === null || dragging) return
+    const t = setTimeout(() => setPending(null), 5000)
+    return () => clearTimeout(t)
+  }, [pending, dragging])
+  const shown = pending ?? reported
   return (
-    <span style={{ marginLeft: '8px' }}>
-      {[0, 50, 100].map((v) => <button class="small" disabled={!mqttConnected.value} onClick={() => set(v)}>{v}%</button>)}
+    <span class="fan-slider">
+      <input
+        type="range" min={0} max={100} step={5} value={shown}
+        disabled={!mqttConnected.value}
+        onInput={(e) => { setDragging(true); setPending(+e.currentTarget.value) }}
+        onChange={(e) => {
+          const pct = +e.currentTarget.value
+          setDragging(false)
+          setPending(pct)
+          cmd.gcode(`M106 P${p} S${Math.round((pct / 100) * 255)}`)
+        }}
+      />
+      <span class={pending !== null ? 'muted' : undefined}>{shown}%</span>
     </span>
   )
 }

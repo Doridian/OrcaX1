@@ -61,6 +61,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.danger { color: var(--danger); }
 button.small { padding: 2px 7px; font-size: 12px; }
 button.icon { padding: 4px 7px; min-width: 30px; }
+button.lightbulb { padding: 2px 5px; line-height: 0; color: var(--muted); }
+button.lightbulb svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+button.lightbulb.on { color: #e0a800; border-color: #e0a800; background: color-mix(in srgb, #ffc400 18%, var(--panel)); }
+button.lightbulb.on svg { fill: #ffd54a; }
 input[type="text"], input[type="number"], select, textarea {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -227,6 +231,9 @@ dialog footer { padding: 10px 16px; border-top: 1px solid var(--border); display
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.fan-slider { display: flex; align-items: center; gap: 8px; }
+.fan-slider input[type="range"] { flex: 1; min-width: 0; max-width: 220px; accent-color: var(--accent); }
+.fan-slider > span { min-width: 3.5ch; text-align: right; }
 .btnrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .jog { display: grid; grid-template-columns: repeat(3, 44px) 16px repeat(2, 44px); grid-template-rows: repeat(3, 34px); gap: 4px; }
 .jog button { padding: 0; }
