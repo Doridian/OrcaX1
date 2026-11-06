@@ -11,7 +11,7 @@ export const serial = signal<string | null>(null)
 export const modelId = signal<string | null>(null)
 export const status = signal<Status>({})
 export const lastReports = signal<{ t: number; data: any }[]>([])
-export const commandLog = signal<{ t: number; text: string; ok: boolean | null }[]>([])
+export const commandLog = signal<{ t: number; text: string; ok: boolean | null; seq?: string }[]>([])
 
 let ws: WebSocket | null = null
 let retry = 0
@@ -33,16 +33,27 @@ function onReport(data: any) {
   const keep = lastReports.value.slice(-49)
   keep.push({ t: Date.now(), data })
   lastReports.value = keep
-  // Command results ("result": "success"/"fail") for anything that isn't a status push.
+  // Command results ("result": "success"/"fail"). The printer can ack a request several times;
+  // results for our own requests just color their log entry, other successes are ignored.
   for (const v of Object.values(data)) {
-    if (isObj(v) && v.command && v.command !== 'push_status' && 'result' in v) {
-      log(`${v.command}: ${v.result}${v.reason ? ` (${v.reason})` : ''}`, String(v.result).toLowerCase() === 'success')
+    if (!isObj(v) || !v.command || v.command === 'push_status' || !('result' in v)) continue
+    const ok = String(v.result).toLowerCase() === 'success'
+    const reason = v.reason && String(v.reason).toLowerCase() !== String(v.result).toLowerCase() ? ` (${v.reason})` : ''
+    const i = v.sequence_id != null ? commandLog.value.findIndex((l) => l.seq === String(v.sequence_id)) : -1
+    if (i >= 0) {
+      const e = commandLog.value[i]
+      if (e.ok === false) continue // keep the first failure
+      const next = [...commandLog.value]
+      next[i] = { ...e, ok, text: ok ? e.text : `${e.text}: ${v.result}${reason}` }
+      commandLog.value = next
+    } else if (!ok) {
+      log(`${v.command}: ${v.result}${reason}`, false)
     }
   }
 }
 
-function log(text: string, ok: boolean | null) {
-  commandLog.value = [...commandLog.value.slice(-29), { t: Date.now(), text, ok }]
+function log(text: string, ok: boolean | null, seq?: string) {
+  commandLog.value = [...commandLog.value.slice(-29), { t: Date.now(), text, ok, seq }]
 }
 
 /** Keeps the status websocket open (reconnecting) until disconnectPrinter(). */
@@ -106,19 +117,25 @@ function open() {
   }
 }
 
+let nextSeq = 1_000_000 + Math.floor(Math.random() * 1_000_000_000)
+
 /** Publishes {[type]: {command, ...}} to device/<sn>/request. */
 export function sendRequest(data: Record<string, any>, label?: string) {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     log(`not connected: ${label ?? JSON.stringify(data)}`, false)
     return false
   }
-  ws.send(JSON.stringify({ type: 'request', data }))
-  log(label ?? Object.values(data).map((v: any) => v.command).join(','), null)
+  // Our own sequence_id (the daemon only fills it in when missing) so replies can be matched
+  // to the log entry. Offset from the daemon's counter, which starts at 1.
+  const seq = String(nextSeq++)
+  const tagged = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, isObj(v) ? { sequence_id: seq, ...v } : v]))
+  ws.send(JSON.stringify({ type: 'request', data: tagged }))
+  log(label ?? Object.values(data).map((v: any) => v.command).join(','), null, seq)
   return true
 }
 
 export const cmd = {
-  gcode: (line: string) => sendRequest({ print: { command: 'gcode_line', param: line + '\n' } }, `gcode: ${line.split('\n')[0]}`),
+  gcode: (line: string, label?: string) => sendRequest({ print: { command: 'gcode_line', param: line + '\n' } }, label ?? `gcode: ${line.split('\n').join(' · ')}`),
   pause: () => sendRequest({ print: { command: 'pause', param: '' } }),
   resume: () => sendRequest({ print: { command: 'resume', param: '' } }),
   stop: () => sendRequest({ print: { command: 'stop', param: '' } }),

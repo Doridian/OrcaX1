@@ -133,7 +133,7 @@ function FanButtons({ p }: { p: number }) {
 function Controls() {
   const [step, setStep] = useState(10)
   const dis = !mqttConnected.value || isPrinting.value
-  const jog = (axis: string, d: number) => cmd.gcode(`M211 S\nM211 X1 Y1 Z1\nM1002 push_ref_mode\nG91\nG1 ${axis}${d} F${axis === 'Z' ? 600 : 3000}\nM1002 pop_ref_mode\nM211 R`)
+  const jog = (axis: string, d: number) => cmd.gcode(`M211 S\nM211 X1 Y1 Z1\nM1002 push_ref_mode\nG91\nG1 ${axis}${d} F${axis === 'Z' ? 600 : 3000}\nM1002 pop_ref_mode\nM211 R`, `jog ${axis}${d > 0 ? '+' : ''}${d}`)
   return (
     <div class="card">
       <h2>Control <span class="spacer" />
@@ -147,7 +147,7 @@ function Controls() {
         <button disabled={dis} onClick={() => jog('Z', -step)} title="Bed up">Z−</button>
         <span />
         <button disabled={dis} onClick={() => jog('X', -step)}>X−</button>
-        <button disabled={dis} onClick={() => cmd.gcode('G28')} title="Home all axes">⌂</button>
+        <button disabled={dis} onClick={() => cmd.gcode('G28', 'home')} title="Home all axes">⌂</button>
         <button disabled={dis} onClick={() => jog('X', step)}>X+</button>
         <span />
         <button disabled={dis} onClick={() => jog('Z', step)} title="Bed down">Z+</button>
@@ -318,7 +318,7 @@ function Log() {
       <div class="log">
         {commandLog.value.length === 0 && <div class="muted">No commands yet.</div>}
         {[...commandLog.value].reverse().map((l) => (
-          <div class={l.ok === false ? 'error' : ''}>{new Date(l.t).toLocaleTimeString()} {l.text}</div>
+          <div class={l.ok === false ? 'error' : l.ok ? 'ok' : ''}>{new Date(l.t).toLocaleTimeString()} {l.text}</div>
         ))}
       </div>
     </div>

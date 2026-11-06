@@ -180,6 +180,7 @@ select.full { width: 100%; }
 .progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin: 6px 0 2px; }
 .progress > div { height: 100%; background: var(--accent); transition: width 0.2s; }
 .error { color: var(--danger); white-space: pre-wrap; word-break: break-word; }
+.log .ok { color: var(--ok); }
 .warning { color: var(--warn); }
 .muted { color: var(--muted); }
 .small-text { font-size: 11px; }
