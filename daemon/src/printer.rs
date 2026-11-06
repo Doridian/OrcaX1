@@ -18,6 +18,8 @@ use crate::files::{ApiError, rel_to_string, sanitize_rel};
 
 pub struct Printer {
     serial: RwLock<Option<String>>,
+    /// Bambu model id from SSDP (BL-P001 = X1 Carbon, BL-P002 = X1, C13 = X1E).
+    model: RwLock<Option<String>>,
     connected: AtomicBool,
     status: Mutex<Option<Value>>,
     events: broadcast::Sender<Utf8Bytes>,
@@ -31,6 +33,7 @@ impl Printer {
         let (events, _) = broadcast::channel(256);
         let p = Arc::new(Self {
             serial: RwLock::new(serial),
+            model: RwLock::new(None),
             connected: AtomicBool::new(false),
             status: Mutex::new(None),
             events,
@@ -46,6 +49,17 @@ impl Printer {
 
     pub fn set_serial(&self, sn: String) {
         *self.serial.write().unwrap() = Some(sn);
+    }
+
+    pub fn model(&self) -> Option<String> {
+        self.model.read().unwrap().clone()
+    }
+
+    pub fn set_model(&self, model: String) {
+        *self.model.write().unwrap() = Some(model.clone());
+        let _ = self
+            .events
+            .send(json!({"type": "model", "model": model}).to_string().into());
     }
 
     pub fn connected(&self) -> bool {
@@ -163,7 +177,12 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(app): State<Arc<App>>) -> Re
 async fn ws_client(mut ws: WebSocket, app: Arc<App>) {
     let p = &app.printer;
     let mut rx = p.events.subscribe();
-    let hello = json!({"type": "hello", "serial": p.serial(), "mqtt_connected": p.connected()});
+    let hello = json!({
+        "type": "hello",
+        "serial": p.serial(),
+        "model": p.model(),
+        "mqtt_connected": p.connected(),
+    });
     if ws.send(Message::text(hello.to_string())).await.is_err() {
         return;
     }

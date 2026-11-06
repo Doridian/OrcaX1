@@ -34,7 +34,8 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
   editor for every key, persisted in the browser.
 * The slicer mirrors the printer: the filament list is the AMS trays and
   external spool (one slot per tray, matched by Bambu filament id), and the
-  nozzle size and type are the ones the printer reports. Changing a filament
+  printer model (from its discovery broadcast) and nozzle size and type are
+  the ones the printer reports. Changing a filament
   or the nozzle in the slicer writes it to the printer after a confirmation.
 * Multi-filament: per-object filament, flush volumes computed from the
   colors.

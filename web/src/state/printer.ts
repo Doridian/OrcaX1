@@ -7,6 +7,8 @@ export type Status = Record<string, any>
 export const wsConnected = signal(false)
 export const mqttConnected = signal(false)
 export const serial = signal<string | null>(null)
+/** Bambu model id the printer announces over SSDP (BL-P001 = X1 Carbon, BL-P002 = X1, C13 = X1E). */
+export const modelId = signal<string | null>(null)
 export const status = signal<Status>({})
 export const lastReports = signal<{ t: number; data: any }[]>([])
 export const commandLog = signal<{ t: number; text: string; ok: boolean | null }[]>([])
@@ -81,6 +83,7 @@ function open() {
     switch (msg.type) {
       case 'hello':
         serial.value = msg.serial ?? null
+        modelId.value = msg.model ?? null
         mqttConnected.value = !!msg.mqtt_connected
         break
       case 'status':
@@ -92,6 +95,9 @@ function open() {
       case 'mqtt':
         mqttConnected.value = !!msg.connected
         if (msg.serial) serial.value = msg.serial
+        break
+      case 'model':
+        modelId.value = msg.model ?? null
         break
       case 'error':
         log(`daemon: ${msg.message}`, false)

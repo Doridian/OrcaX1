@@ -2,7 +2,7 @@ import { useMemo, useState } from 'preact/hooks'
 import { BED_TYPES, type FilamentSlot } from '../slicer/profiles'
 import { TABS, type Field } from '../slicer/schema'
 import {
-  canEditTray, EXTERNAL, nozzle, NOZZLE_TYPES, pendingNozzle, pendingTrays, setModel, trayName, trays,
+  canEditTray, detectedModel, EXTERNAL, nozzle, NOZZLE_TYPES, pendingNozzle, pendingTrays, setModel, trayName, trays,
 } from '../state/hardware'
 import { mqttConnected } from '../state/printer'
 import { confirmNozzleEdit, confirmTrayEdit } from './hardwareEdits'
@@ -47,9 +47,14 @@ function PrinterSection() {
   return (
     <div class="section">
       <h3>Printer</h3>
-      <select class="full" value={cur?.model} onChange={(e) => setModel(e.currentTarget.value)}>
-        {models.map((m) => <option value={m}>{m}</option>)}
-      </select>
+      {detectedModel.value
+        ? <div class="fixed-value" title="Reported by the printer">{detectedModel.value}</div>
+        : (
+          <select class="full" value={cur?.model} title="The printer has not announced its model yet"
+            onChange={(e) => setModel(e.currentTarget.value)}>
+            {models.map((m) => <option value={m}>{m}</option>)}
+          </select>
+        )}
       <div class="row">
         <label title="Reported by the printer; changing it updates the printer">Nozzle</label>
         <div class="control">

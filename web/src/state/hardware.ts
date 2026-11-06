@@ -4,7 +4,7 @@
 // confirmation and only "stick" once the printer reports them back.
 import { batch, computed, effect, signal } from '@preact/signals'
 import { compatibleFilaments, filamentForTray, type FilamentPreset, type FilamentSlot, type ProfileBundle } from '../slicer/profiles'
-import { cmd, mqttConnected, status } from './printer'
+import { cmd, modelId, mqttConnected, status } from './printer'
 import { objects, touch } from './project'
 import { bundle, sel, setPrinter, updateSel } from './settings'
 
@@ -118,13 +118,25 @@ function slotFor(b: ProfileBundle, printer: string, fils: FilamentPreset[], t: T
 
 // ---- Printer -> slicer --------------------------------------------------
 
-function syncNozzle() {
+/** The bundle's printer model matching what the printer announces, or null if not (yet) known. */
+export const detectedModel = computed(() => {
+  const id = modelId.value
+  return (id && bundle.value?.models.find((m) => m.model_id === id)?.name) || null
+})
+
+function syncPrinter() {
   const b = bundle.value, n = nozzle.value
-  if (!b || !n) return
+  if (!b) return
   const s = sel.value
-  const model = b.printers.find((p) => p.name === s.printer)?.model ?? b.printers[0]?.model
-  const want = b.printers.find((p) => p.model === model && Number(p.nozzle) === n.diameter)
-  if (want && want.name !== s.printer) setPrinter(want.name)
+  const cur = b.printers.find((p) => p.name === s.printer)
+  const model = detectedModel.value ?? cur?.model ?? b.printers[0]?.model
+  const d = n?.diameter ?? Number(cur?.nozzle)
+  if (model !== cur?.model || Number(cur?.nozzle) !== d) {
+    const want = b.printers.find((p) => p.model === model && Number(p.nozzle) === d)
+      ?? (model !== cur?.model ? b.printers.find((p) => p.model === model) : undefined)
+    if (want && want.name !== s.printer) setPrinter(want.name)
+  }
+  if (!n) return
   const o = { ...sel.peek().printerOverrides }
   if (NOZZLE_TYPES.some(([v]) => v === n.type)) o.nozzle_type = [n.type]
   else delete o.nozzle_type
@@ -152,7 +164,7 @@ function syncFilaments() {
 }
 
 export function initHardwareSync() {
-  effect(syncNozzle)
+  effect(syncPrinter)
   effect(syncFilaments)
   // Drop pending edits once the printer confirms them, or after a timeout.
   effect(() => { void trays.value; void reportedNozzle.value; expire() })
@@ -196,7 +208,7 @@ export function editNozzle(diameter: number, type: string): boolean {
   return true
 }
 
-/** Switches the printer model (not reported by the printer), keeping the nozzle. */
+/** Switches the printer model by hand (only offered until the printer announces it), keeping the nozzle. */
 export function setModel(model: string) {
   const b = bundle.value
   if (!b) return

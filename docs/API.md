@@ -113,6 +113,7 @@ file extension fall back to `index.html`. `.wasm` is served as
   "boot_id": 4503599627370495,        // random per daemon start
   "update_available": true,           // POST /api/update works (local mode, install.sh present)
   "serial": "00M00A000000000",   // null until known
+  "model": "BL-P001",            // from the printer's SSDP broadcast (BL-P001 X1C, BL-P002 X1, C13 X1E); null until heard
   "mqtt_connected": true,
   "camera_available": true,           // false after the last upstream camera attempt failed
   "camera_error": null,               // why the last upstream camera attempt failed, if it did
@@ -221,10 +222,11 @@ Server → client:
 
 | message | when |
 |---|---|
-| `{"type":"hello","serial":"…","mqtt_connected":bool}` | first message |
+| `{"type":"hello","serial":"…","model":"…","mqtt_connected":bool}` | first message (`model` as in `/api/info`) |
 | `{"type":"status","data":{…}}` | right after `hello` if a status is cached: the last merged `print` object (`push_status`) |
 | `{"type":"report","data":{…}}` | each message the printer publishes on `device/<sn>/report`, verbatim |
 | `{"type":"mqtt","connected":bool}` | MQTT connection state changes |
+| `{"type":"model","model":"BL-P001"}` | the printer model was learned from SSDP |
 | `{"type":"error","message":"…"}` | client sent something invalid |
 
 The daemon keeps a merged copy of the last `print.push_status` (deep-merge,
