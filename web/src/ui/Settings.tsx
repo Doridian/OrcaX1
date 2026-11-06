@@ -37,7 +37,8 @@ function Account() {
 function SingleSignOn() {
   const [view, setView] = useState<OidcView | null>(null)
   const [cfg, setCfg] = useState<OidcConfig | null>(null)
-  const [allowed, setAllowed] = useState('')
+  const [users, setUsers] = useState('')
+  const [groups, setGroups] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -45,7 +46,8 @@ function SingleSignOn() {
   const load = (v: OidcView) => {
     setView(v)
     setCfg(v.config)
-    setAllowed(v.config.allowed.join('\n'))
+    setUsers(v.config.allowed_users.join('\n'))
+    setGroups(v.config.allowed_groups.join('\n'))
   }
   useEffect(() => { getOidc().then(load).catch((e) => setErr(e.message)) }, [])
 
@@ -58,7 +60,8 @@ function SingleSignOn() {
     setErr(null)
     setSaved(false)
     try {
-      load(await saveOidc({ ...cfg, allowed: allowed.split(/[\s,]+/).filter(Boolean) }, clearSecret))
+      const list = (t: string) => t.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
+      load(await saveOidc({ ...cfg, allowed_users: list(users), allowed_groups: list(groups) }, clearSecret))
       setSaved(true)
       refreshAuth().catch(() => {})
     } catch (e: any) { setErr(e?.message ?? String(e)) } finally { setBusy(false) }
@@ -97,15 +100,43 @@ function SingleSignOn() {
           <div class="muted small-text">Add <code>groups</code> to allow by group (the provider has to grant it).</div>
         </div>
 
-        <label>Allowed users and groups</label>
+        <label>User id claim</label>
         <div>
-          <textarea rows={3} value={allowed} placeholder="anyone the provider lets through" onInput={(e) => { setAllowed(e.currentTarget.value); setSaved(false) }} />
-          <div class="muted small-text">
-            One per line: a username (<code>preferred_username</code>), verified email, <code>sub</code>, or an entry of the{' '}
-            <code>groups</code> claim (Kanidm: <code>printer_users@idm.example.com</code>). Empty lets in everyone who can
-            get a token for this client, so restrict access at the provider (Kanidm: the client's scope map) in that case.
-          </div>
+          <input type="text" value={cfg.user_id_claim} placeholder="sub" onInput={(e) => set({ user_id_claim: e.currentTarget.value })} />
+          <div class="muted small-text">A value that never changes for a user; <code>sub</code> unless your provider says otherwise.</div>
         </div>
+
+        <label>Username claim</label>
+        <div>
+          <input type="text" value={cfg.username_claim} placeholder="preferred_username" onInput={(e) => set({ username_claim: e.currentTarget.value })} />
+          <div class="muted small-text">Shown in the UI and matched by the allowed users. Use one users cannot change themselves at the provider. <code>email</code> is only accepted with <code>email_verified</code> true.</div>
+        </div>
+
+        <label>Groups claim</label>
+        <div>
+          <input type="text" value={cfg.groups_claim} placeholder="groups" onInput={(e) => set({ groups_claim: e.currentTarget.value })} />
+          <div class="muted small-text">An array of strings (or one string). Dots reach into nested claims, e.g. <code>realm_access.roles</code> for Keycloak. The provider usually needs a scope (e.g. <code>groups</code>) to send it.</div>
+        </div>
+
+        <label>Allowed users</label>
+        <div>
+          <textarea rows={2} value={users} onInput={(e) => { setUsers(e.currentTarget.value); setSaved(false) }} />
+          <div class="muted small-text">One per line, matched against the user id and username claims.</div>
+        </div>
+
+        <label>Allowed groups</label>
+        <div>
+          <textarea rows={2} value={groups} onInput={(e) => { setGroups(e.currentTarget.value); setSaved(false) }} />
+          <div class="muted small-text">One per line, matched against the groups claim (Kanidm: <code>printer_users@idm.example.com</code>).</div>
+        </div>
+        {!users.trim() && !groups.trim() && <>
+          <label />
+          <div class="warning small-text">
+            With no allowed users or groups, <b>anyone who can get a token for this client</b> can control the printer. Only
+            leave both empty if the provider itself restricts the client to the right people (Kanidm: the client's scope
+            map); never with a public provider such as Google or GitHub.
+          </div>
+        </>}
 
         <label>Button label</label>
         <input type="text" value={cfg.label} placeholder="single sign-on" onInput={(e) => set({ label: e.currentTarget.value })} />
@@ -118,7 +149,7 @@ function SingleSignOn() {
       </div>
 
       {err && <div class="error">{err}</div>}
-      {saved && <div class="muted small-text">Saved. Changing the issuer, client or allow list signs out existing single sign-on sessions.</div>}
+      {saved && <div class="muted small-text">Saved. Changing the issuer, client, claims or allow lists signs out existing single sign-on sessions.</div>}
       <div class="btnrow">
         <button class="primary" disabled={busy} onClick={() => save()}>{busy ? 'Checking provider…' : 'Save'}</button>
       </div>
@@ -307,8 +338,9 @@ function Certificate() {
         {cert && <button disabled={busy || running} onClick={() => act(issueAcme, false)}>Renew now</button>}
       </div>
       <p class="muted small-text">
-        Requesting a certificate accepts the CA's terms of service. Credentials are stored on the printer's SD card
-        (<code>orcax1/state/acme/</code>); give the DNS credentials as little access as your provider allows.
+        Requesting a certificate accepts the CA's terms of service. Credentials are stored on the printer's internal
+        flash (<code>/userdata/orcax1/state/acme/</code>). Only use a token limited to this one record or zone's DNS,
+        never an account-wide key.
       </p>
     </div>
   )

@@ -722,7 +722,10 @@ fn redact(mut cfg: AcmeConfig) -> (AcmeConfig, Vec<String>) {
     (cfg, set)
 }
 
-/// Cleans up a config from the browser; empty secrets keep their saved value.
+/// Cleans up a config from the browser; empty secrets keep their saved
+/// value, but only while everything they are sent to stays the same, so a
+/// changed server or URL can never receive a secret that was set for
+/// another one.
 fn merge(mut new: AcmeConfig, old: &AcmeConfig) -> AcmeConfig {
     new.directory = new.directory.trim().to_string();
     new.email = new.email.trim().to_string();
@@ -737,14 +740,20 @@ fn merge(mut new: AcmeConfig, old: &AcmeConfig) -> AcmeConfig {
     let mut seen = std::collections::HashSet::new();
     domains.retain(|d| seen.insert(d.clone()));
     new.domains = domains;
-    if new.eab_hmac.is_empty() {
+    if new.eab_hmac.is_empty() && new.directory == old.directory && new.eab_kid == old.eab_kid {
         new.eab_hmac = old.eab_hmac.clone();
     }
     if let Some(info) = dns::find(&new.dns_provider) {
+        let same_target = old.dns_provider == new.dns_provider
+            && info
+                .fields
+                .iter()
+                .filter(|f| !f.secret)
+                .all(|f| dns::get(&new.dns, f.key).trim() == dns::get(&old.dns, f.key).trim());
         let mut dns = dns::Settings::new();
         for f in info.fields {
             let mut v = dns::get(&new.dns, f.key).to_string();
-            if v.is_empty() && f.secret && old.dns_provider == new.dns_provider {
+            if v.is_empty() && f.secret && same_target {
                 v = dns::get(&old.dns, f.key).to_string();
             }
             if !v.is_empty() {
@@ -938,5 +947,20 @@ mod tests {
         let merged = merge(red, &old);
         assert_eq!(dns::get(&merged.dns, "api_token"), "tok");
         assert_eq!(merged.eab_hmac, "h");
+    }
+
+    #[test]
+    fn secrets_dropped_when_target_changes() {
+        let mut old = AcmeConfig::default();
+        old.dns.insert("api_token".into(), "tok".into());
+        old.dns.insert("zone_id".into(), "z1".into());
+        old.eab_kid = "kid".into();
+        old.eab_hmac = "h".into();
+        let (mut red, _) = redact(old.clone());
+        red.dns.insert("zone_id".into(), "z2".into());
+        red.eab_kid = "other".into();
+        let merged = merge(red, &old);
+        assert_eq!(dns::get(&merged.dns, "api_token"), "");
+        assert_eq!(merged.eab_hmac, "");
     }
 }

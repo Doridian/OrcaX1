@@ -50,16 +50,19 @@ pub struct Config {
     )]
     pub web_root: PathBuf,
 
-    /// Directory for persistent daemon state (generated TLS certificates).
+    /// Directory for persistent daemon state: TLS CA and certificates,
+    /// login sessions, OpenID Connect and ACME settings (with their
+    /// secrets). Kept on internal flash, out of reach of the SD card's FTPS
+    /// server, which anyone with the LAN access code can read.
     #[arg(
         long,
         env = "ORCAX1D_STATE_DIR",
-        default_value = "/mnt/sdcard/orcax1/state"
+        default_value = "/userdata/orcax1/state"
     )]
     pub state_dir: PathBuf,
 
-    /// Where install.sh installed OrcaX1 from (holds orcax1d, www/,
-    /// install.sh, VERSION). Updates uploaded through the web UI are
+    /// The release folder on the SD card that install.sh installs from
+    /// (holds orcax1d, www/, install.sh, VERSION). Updates uploaded through the web UI are
     /// unpacked here; they are only offered when install.sh is present.
     #[arg(
         long,

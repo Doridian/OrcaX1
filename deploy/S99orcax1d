@@ -3,45 +3,39 @@
 # OrcaX1 daemon: serves the in-browser slicer UI and bridges it to the
 # printer's MQTT broker, camera and SD card.
 #
-# Everything lives on the SD card under /mnt/sdcard/orcax1. The SD card is
-# FAT32 mounted without exec permission, so the binary is copied to
-# /userdata/bin (internal flash, exec allowed) before it is started. The copy
-# is skipped when it is already up to date, to spare the flash.
-#
-# Optional overrides: /mnt/sdcard/orcax1/orcax1d.conf, a shell fragment that
-# sets ORCAX1D_* variables (see `orcax1d --help`), for example
-#   ORCAX1D_LISTEN=0.0.0.0:8443
-#   ORCAX1D_NO_REDIRECT=true
+# The release (web UI, install.sh) lives on the SD card under
+# /mnt/sdcard/orcax1. Everything that runs as root or holds secrets lives on
+# internal flash under /userdata/orcax1, out of reach of the SD card's FTPS
+# server (which anyone with the LAN access code can use):
+#   orcax1d        the binary (install.sh copies it here from the SD card)
+#   orcax1d.conf   optional overrides, a shell fragment that sets ORCAX1D_*
+#                  variables (see `orcax1d --help`), for example
+#                    ORCAX1D_LISTEN=0.0.0.0:8443
+#                    ORCAX1D_NO_REDIRECT=true
+#   state/         certificates, sessions, settings and their credentials
 
 BASE=/mnt/sdcard/orcax1
-SRC_BIN=$BASE/orcax1d
-RUN_DIR=/userdata/bin
-RUN_BIN=$RUN_DIR/orcax1d
+HOME_DIR=/userdata/orcax1
+RUN_BIN=$HOME_DIR/orcax1d
+CONF=$HOME_DIR/orcax1d.conf
 PIDFILE=/var/run/orcax1d.pid
 LOG=/tmp/orcax1d.log
 
 start() {
 	printf "Starting orcax1d: "
-	if [ ! -f "$SRC_BIN" ]; then
-		echo "not installed ($SRC_BIN missing)"
+	if [ ! -x "$RUN_BIN" ]; then
+		echo "not installed ($RUN_BIN missing; run $BASE/install.sh)"
 		return 1
 	fi
-	mkdir -p "$RUN_DIR" "$BASE/state"
-	if ! cmp -s "$SRC_BIN" "$RUN_BIN"; then
-		cp "$SRC_BIN" "$RUN_BIN.new" && chmod 755 "$RUN_BIN.new" && mv "$RUN_BIN.new" "$RUN_BIN" || {
-			rm -f "$RUN_BIN.new"
-			echo "FAIL (copy)"
-			return 1
-		}
-	fi
+	mkdir -p "$HOME_DIR/state"
 	[ -f "$LOG" ] && mv "$LOG" "$LOG.old"
-	if [ -f "$BASE/orcax1d.conf" ]; then
+	if [ -f "$CONF" ]; then
 		set -a
-		. "$BASE/orcax1d.conf"
+		. "$CONF"
 		set +a
 	fi
 	export ORCAX1D_WEB_ROOT="${ORCAX1D_WEB_ROOT:-$BASE/www}"
-	export ORCAX1D_STATE_DIR="${ORCAX1D_STATE_DIR:-$BASE/state}"
+	export ORCAX1D_STATE_DIR="${ORCAX1D_STATE_DIR:-$HOME_DIR/state}"
 	# The shell execs the daemon, so the pid written by -m is the daemon's.
 	start-stop-daemon -S -m -b -N 10 -p "$PIDFILE" --exec /bin/sh -- \
 		-c "exec $RUN_BIN >>$LOG 2>&1"

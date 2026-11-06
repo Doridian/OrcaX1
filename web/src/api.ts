@@ -171,7 +171,14 @@ export interface OidcConfig {
   /** Always empty when read back; see `OidcView.secret_set`. */
   client_secret: string
   scopes: string
-  allowed: string[]
+  /** ID token claim names (dotted paths reach into nested objects). */
+  user_id_claim: string
+  username_claim: string
+  groups_claim: string
+  /** Matched against the user id and username claims. */
+  allowed_users: string[]
+  /** Matched against the groups claim. Both lists empty: anyone. */
+  allowed_groups: string[]
 }
 export interface OidcView {
   config: OidcConfig
