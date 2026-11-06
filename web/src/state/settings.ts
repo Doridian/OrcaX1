@@ -1,7 +1,7 @@
 import { computed, effect, signal } from '@preact/signals'
 import {
   bedSize, compatibleFilaments, compatibleProcesses, loadBundle,
-  type FilamentSlot, type ProfileBundle, type Selection,
+  type ProfileBundle, type Selection,
 } from '../slicer/profiles'
 import { touch } from './project'
 
@@ -77,10 +77,6 @@ export function setPrinter(name: string) {
     return { ...f, preset: match?.name ?? f.preset }
   })
   updateSel({ printer: name, process, filaments, processOverrides: {} })
-}
-
-export function setFilaments(filaments: FilamentSlot[]) {
-  updateSel({ filaments })
 }
 
 export async function initSettings() {

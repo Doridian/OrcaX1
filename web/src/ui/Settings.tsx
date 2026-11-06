@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks'
+import { ask } from '../state/confirm'
 import { deleteAcmeCert, getAcme, getOidc, info, issueAcme, registerAcmeAccount, saveAcme, saveOidc, uploadUpdate, type AcmeConfig, type AcmeView, type DaemonInfo, type OidcConfig, type OidcView } from '../api'
 import { auth, logout, refreshAuth } from '../state/auth'
 
@@ -87,7 +88,7 @@ function SingleSignOn() {
         <label>Client secret</label>
         <div>
           <input type="password" autocomplete="off" value={cfg.client_secret} placeholder={view.secret_set ? '(saved, unchanged)' : 'empty for a public client'} onInput={(e) => set({ client_secret: e.currentTarget.value })} />
-          {view.secret_set && <div><button disabled={busy} onClick={() => { if (confirm('Remove the saved client secret (use as a public client)?')) save(true) }}>Remove saved secret</button></div>}
+          {view.secret_set && <div><button disabled={busy} onClick={async () => { if (await ask({ title: 'Remove the saved client secret?', body: 'OpenID Connect will log in as a public client.', confirm: 'Remove', danger: true })) save(true) }}>Remove saved secret</button></div>}
         </div>
 
         <label>Scopes</label>
@@ -302,7 +303,7 @@ function Certificate() {
         <button disabled={busy || running} onClick={() => act(() => saveAcme(current(), false))}>Save</button>
         <button class="primary" disabled={busy || running} onClick={() => act(() => saveAcme(current(), true))}>Save and request certificate</button>
         <span class="spacer" />
-        {cert && <button class="danger" disabled={busy || running} onClick={() => { if (confirm('Delete the certificate and turn off renewal? The printer goes back to its self-signed certificate.')) act(deleteAcmeCert) }}>Remove certificate</button>}
+        {cert && <button class="danger" disabled={busy || running} onClick={async () => { if (await ask({ title: 'Delete the certificate?', body: 'Renewal is turned off and the printer goes back to its self-signed certificate.', confirm: 'Delete', danger: true })) act(deleteAcmeCert) }}>Remove certificate</button>}
         {cert && <button disabled={busy || running} onClick={() => act(issueAcme, false)}>Renew now</button>}
       </div>
       <p class="muted small-text">

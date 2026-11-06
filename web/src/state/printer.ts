@@ -129,6 +129,10 @@ export const cmd = {
   amsRefreshRfid: (amsId: number, slotId: number) => sendRequest({ print: { command: 'ams_get_rfid', ams_id: amsId, slot_id: slotId } }),
   amsSetTray: (amsId: number, trayId: number, p: { tray_info_idx: string; tray_color: string; tray_type: string; nozzle_temp_min: number; nozzle_temp_max: number }) =>
     sendRequest({ print: { command: 'ams_filament_setting', ams_id: amsId, tray_id: trayId, ...p } }, `set tray ${amsId}/${trayId}`),
+  /** What Bambu Studio sends from "Printer parts" when the hotend is swapped. */
+  setNozzle: (diameter: number, type: string) => sendRequest({
+    system: { command: 'set_accessories', accessory_type: 'nozzle', nozzle_diameter: diameter, nozzle_type: type },
+  }, `set nozzle ${diameter} mm ${type}`),
   timelapse: (on: boolean) => sendRequest({ camera: { command: 'ipcam_timelapse', control: on ? 'enable' : 'disable' } }),
   record: (on: boolean) => sendRequest({ camera: { command: 'ipcam_record_set', control: on ? 'enable' : 'disable' } }),
   skipObjects: (ids: number[]) => sendRequest({ print: { command: 'skip_objects', obj_list: ids } }),
