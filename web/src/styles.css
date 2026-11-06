@@ -70,6 +70,14 @@ input[type="text"], input[type="number"], select, textarea {
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: -1px; }
 input.changed, select.changed { border-color: var(--warn); }
+input:disabled, select:disabled, textarea:disabled {
+  background: var(--panel-2);
+  border-style: dashed;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+/* A value the printer reports and the UI can't change: plain text, sized like a select. */
+.fixed-value { padding: 5px 0; font-weight: 600; }
 
 .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
 .topbar {

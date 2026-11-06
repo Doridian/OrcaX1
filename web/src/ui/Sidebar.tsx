@@ -47,11 +47,14 @@ function PrinterSection() {
   return (
     <div class="section">
       <h3>Printer</h3>
-      <select class="full" value={cur?.model} disabled={!!detectedModel.value}
-        title={detectedModel.value ? 'Reported by the printer' : 'The printer has not announced its model yet'}
-        onChange={(e) => setModel(e.currentTarget.value)}>
-        {models.map((m) => <option value={m}>{m}</option>)}
-      </select>
+      {detectedModel.value
+        ? <div class="fixed-value" title="Reported by the printer">{detectedModel.value}</div>
+        : (
+          <select class="full" value={cur?.model} title="The printer has not announced its model yet"
+            onChange={(e) => setModel(e.currentTarget.value)}>
+            {models.map((m) => <option value={m}>{m}</option>)}
+          </select>
+        )}
       <div class="row">
         <label title="Reported by the printer; changing it updates the printer">Nozzle</label>
         <div class="control">
