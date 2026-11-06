@@ -77,7 +77,10 @@ file extension fall back to `index.html`. `.wasm` is served as
 ```json
 {
   "name": "orcax1d",
-  "version": "0.1.0",
+  "version": "0.1.0",                 // the daemon crate version
+  "release": "v1.2.0",                // the installed release (VERSION file), null if none
+  "boot_id": 4503599627370495,        // random per daemon start
+  "update_available": true,           // POST /api/update works (local mode, install.sh present)
   "serial": "00M00A000000000",   // null until known
   "mqtt_connected": true,
   "camera_available": true,           // false after the last upstream camera attempt failed
@@ -297,3 +300,28 @@ The URL prefix is configurable (`--print-url-prefix`, default
 `{"ams_id":255,"slot_id":0}` and -1 maps to `{"ams_id":255,"slot_id":255}`.
 
 → `{"ok":true,"request":{…published payload…}}`
+
+## `POST /api/update`
+
+Installs a release zip (`orcax1-<version>.zip`, the same file that is
+unpacked onto the SD card by hand), sent as the raw request body (no
+multipart), at most 256 MB. Only works on the printer (not in remote mode)
+with an install made by `install.sh` in `--install-dir` (default
+`/mnt/sdcard/orcax1`); otherwise `409`.
+
+The daemon streams the zip to `<install-dir>/.update.zip`, unpacks it to
+`<install-dir>/.update/`, and checks it: an `orcax1/` folder (or the same
+files at the zip root) with `orcax1d`, `www/index.html`, `install.sh` and
+`S99orcax1d`, no symlinks, no paths escaping the folder, nothing named
+`state` or `orcax1d.conf`. It then copies the new `orcax1d` next to the
+running binary and runs its `--version`, which rejects a binary for the
+wrong CPU or a corrupt one. Only then is each top-level file and directory
+swapped into place (put back if a step fails), so `www/` ends up exactly the
+new release's. `state/` and `orcax1d.conf` are left alone. A rejected zip
+gives `400 {"error":"…"}` and changes nothing.
+
+→ `202 {"version":"v1.2.0","log":"/tmp/orcax1d-update.log"}`. About a second
+later the daemon runs `install.sh` detached (output in that log), which
+restarts it. Clients wait for `boot_id` in `/api/info` to change. While an
+update runs, and after `install.sh` has been started, further requests get
+`409`.

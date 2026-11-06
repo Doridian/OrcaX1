@@ -68,8 +68,46 @@ export async function startPrint(req: PrintRequest) {
   }))).json()
 }
 
-export async function info() {
-  return (await check(await fetch(api('info')))).json()
+export interface DaemonInfo {
+  name: string
+  version: string
+  /** The installed release (VERSION file), null when not installed from a release. */
+  release: string | null
+  /** Changes whenever the daemon restarts. */
+  boot_id: number
+  /** Whether a release zip can be uploaded to update (the daemon runs on the printer). */
+  update_available: boolean
+  serial: string | null
+  mqtt_connected: boolean
+  camera_available: boolean
+  camera_error: string | null
+  mode: 'local' | 'remote'
+  sd_dir: string
+}
+
+export async function info(): Promise<DaemonInfo> {
+  return (await check(await fetch(api('info'), { cache: 'no-store' }))).json()
+}
+
+/** Uploads a release zip; the daemon installs it and restarts (202 when accepted). */
+export function uploadUpdate(zip: Blob, onProgress?: (fraction: number) => void): Promise<{ version: string; log: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', api('update'))
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(e.loaded / e.total) }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)) } catch { resolve({ version: '', log: '' }) }
+      } else {
+        if (xhr.status === 401) sessionExpired()
+        let msg = `${xhr.status} ${xhr.statusText}`
+        try { msg = JSON.parse(xhr.responseText).error ?? msg } catch { /* not JSON */ }
+        reject(new Error(msg))
+      }
+    }
+    xhr.onerror = () => reject(new Error('upload failed: network error'))
+    xhr.send(zip)
+  })
 }
 
 // ACME certificates (Settings page).

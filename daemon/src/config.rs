@@ -13,9 +13,16 @@ pub struct Config {
     #[arg(long, env = "ORCAX1D_LISTEN", default_value = "0.0.0.0:443")]
     pub listen: SocketAddr,
 
-    /// Plain-HTTP listener that 301-redirects to the HTTPS listener.
-    #[arg(long, env = "ORCAX1D_REDIRECT_LISTEN", default_value = "0.0.0.0:8080")]
-    pub redirect_listen: SocketAddr,
+    /// Plain-HTTP listeners that 301-redirect to the HTTPS listener,
+    /// comma-separated. One that cannot be bound (say, port 80 already in
+    /// use) is skipped with a warning.
+    #[arg(
+        long,
+        env = "ORCAX1D_REDIRECT_LISTEN",
+        value_delimiter = ',',
+        default_value = "0.0.0.0:80,0.0.0.0:8080"
+    )]
+    pub redirect_listen: Vec<SocketAddr>,
 
     /// Disable the HTTP -> HTTPS redirect listener.
     #[arg(long, env = "ORCAX1D_NO_REDIRECT")]
@@ -50,6 +57,16 @@ pub struct Config {
         default_value = "/mnt/sdcard/orcax1/state"
     )]
     pub state_dir: PathBuf,
+
+    /// Where install.sh installed OrcaX1 from (holds orcax1d, www/,
+    /// install.sh, VERSION). Updates uploaded through the web UI are
+    /// unpacked here; they are only offered when install.sh is present.
+    #[arg(
+        long,
+        env = "ORCAX1D_INSTALL_DIR",
+        default_value = "/mnt/sdcard/orcax1"
+    )]
+    pub install_dir: PathBuf,
 
     /// Root of the file API (the printer's SD card). Ignored with --printer.
     #[arg(long, env = "ORCAX1D_SD_DIR", default_value = "/mnt/sdcard")]
