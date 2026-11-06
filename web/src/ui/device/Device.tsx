@@ -1,3 +1,4 @@
+import { signal } from '@preact/signals'
 import { useEffect, useState } from 'preact/hooks'
 import { deleteFile, downloadUrl, listFiles, startPrint, type FileEntry } from '../../api'
 import { cmd, commandLog, gcodeState, isPrinting, mqttConnected, status } from '../../state/printer'
@@ -134,33 +135,55 @@ function Temps() {
 // The printer reports fan speeds in 16 steps (0-15).
 const fanPct = (v: any) => Math.round((Number(v ?? 0) / 15) * 100)
 
-// Shows the reported fan speed. While dragging, and after release until the
-// printer reports a new speed (or a few seconds pass), it shows the chosen value.
+// What we last told each fan to do, keyed by M106 P index. The printer only
+// reports the actual (spinning-up) speed, so the commanded speed lives here and
+// outlives the component when switching tabs.
+const fanCommanded = signal<Record<number, { pct: number; at: number }>>({})
+// One reported step (100/15 %) counts as "reached".
+const FAN_STEP = 100 / 15
+// Give up on a command the fan never reaches (e.g. G-code overrode it).
+const FAN_COMMAND_TTL = 30_000
+
+// The bar fills to the reported speed; the tick you drag is the commanded one.
+// Once the fan reaches the commanded speed (or the command goes stale), the
+// tick follows the reported speed again.
 function FanSlider({ p, speed }: { p: number; speed: any }) {
-  const reported = fanPct(speed)
-  const [pending, setPending] = useState<number | null>(null)
-  const [dragging, setDragging] = useState(false)
-  useEffect(() => { if (!dragging) setPending(null) }, [reported])
+  const actual = fanPct(speed)
+  const [drag, setDrag] = useState<number | null>(null)
+  const sent = fanCommanded.value[p]
+  const clear = () => {
+    const { [p]: _, ...rest } = fanCommanded.peek()
+    fanCommanded.value = rest
+  }
   useEffect(() => {
-    if (pending === null || dragging) return
-    const t = setTimeout(() => setPending(null), 5000)
+    if (sent && Math.abs(actual - sent.pct) < FAN_STEP) clear()
+  }, [actual, sent])
+  useEffect(() => {
+    if (!sent) return
+    const t = setTimeout(clear, Math.max(0, sent.at + FAN_COMMAND_TTL - Date.now()))
     return () => clearTimeout(t)
-  }, [pending, dragging])
-  const shown = pending ?? reported
+  }, [sent])
+  const commanded = drag ?? sent?.pct ?? actual
   return (
     <span class="fan-slider">
-      <input
-        type="range" min={0} max={100} step={5} value={shown}
-        disabled={!mqttConnected.value}
-        onInput={(e) => { setDragging(true); setPending(+e.currentTarget.value) }}
-        onChange={(e) => {
-          const pct = +e.currentTarget.value
-          setDragging(false)
-          setPending(pct)
-          cmd.gcode(`M106 P${p} S${Math.round((pct / 100) * 255)}`)
-        }}
-      />
-      <span class={pending !== null ? 'muted' : undefined}>{shown}%</span>
+      <span class="fan-track">
+        <span class="fan-actual" style={{ width: `${actual}%` }} />
+        <input
+          type="range" min={0} max={100} step={5} value={commanded}
+          aria-label="Commanded fan speed"
+          disabled={!mqttConnected.value}
+          onInput={(e) => setDrag(+e.currentTarget.value)}
+          onChange={(e) => {
+            const pct = +e.currentTarget.value
+            setDrag(null)
+            fanCommanded.value = { ...fanCommanded.peek(), [p]: { pct, at: Date.now() } }
+            cmd.gcode(`M106 P${p} S${Math.round((pct / 100) * 255)}`)
+          }}
+        />
+      </span>
+      <span class="fan-label" title="Actual / commanded">
+        {actual}% <span class="muted">/ {commanded}%</span>
+      </span>
     </span>
   )
 }

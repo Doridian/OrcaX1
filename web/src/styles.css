@@ -232,8 +232,18 @@ dialog footer { padding: 10px 16px; border-top: 1px solid var(--border); display
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
 .fan-slider { display: flex; align-items: center; gap: 8px; }
-.fan-slider input[type="range"] { flex: 1; min-width: 0; max-width: 220px; accent-color: var(--accent); }
-.fan-slider > span { min-width: 3.5ch; text-align: right; }
+.fan-track { position: relative; flex: 1; min-width: 0; max-width: 220px; height: 18px; display: flex; align-items: center; }
+.fan-track::before { content: ""; position: absolute; left: 0; right: 0; height: 6px; border-radius: 3px; background: var(--border); }
+.fan-actual { position: absolute; left: 0; height: 6px; border-radius: 3px; background: var(--accent); transition: width 0.4s ease; }
+.fan-track input[type="range"] { position: relative; width: 100%; margin: 0; height: 18px; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+.fan-track input[type="range"]:disabled { cursor: default; border: none; background: transparent; }
+.fan-track input[type="range"]::-webkit-slider-runnable-track { background: transparent; height: 18px; }
+.fan-track input[type="range"]::-moz-range-track { background: transparent; height: 18px; }
+.fan-track input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 18px; border-radius: 2px; background: var(--text, currentColor); border: none; }
+.fan-track input[type="range"]::-moz-range-thumb { width: 4px; height: 18px; border-radius: 2px; background: var(--text, currentColor); border: none; }
+.fan-track input[type="range"]:disabled::-webkit-slider-thumb { opacity: 0.4; }
+.fan-track input[type="range"]:disabled::-moz-range-thumb { opacity: 0.4; }
+.fan-label { min-width: 10ch; text-align: right; white-space: nowrap; }
 .btnrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .jog { display: grid; grid-template-columns: repeat(3, 44px) 16px repeat(2, 44px); grid-template-rows: repeat(3, 34px); gap: 4px; }
 .jog button { padding: 0; }
