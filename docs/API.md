@@ -21,9 +21,10 @@ WebSocket upgrade too). Static files are public, so the login page can load.
 
 ## Authentication
 
-Login methods are pluggable providers (`daemon/src/auth/`). The only one so
-far is `access-code`: the printer's LAN access code, the same secret that
-guards its MQTT, camera and FTPS. A successful login sets an HttpOnly,
+Login methods are pluggable providers (`daemon/src/auth/`), chosen with
+`--auth` (default `access-code,oidc`): `access-code` is the printer's LAN
+access code, the same secret that guards its MQTT, camera and FTPS; `oidc`
+is OpenID Connect, offered once it is set up (see below). A successful login sets an HttpOnly,
 `SameSite=Strict` session cookie (`__Host-orcax1_session` over HTTPS,
 `orcax1_session` with `--no-tls`) valid for `--session-days` (default 30).
 Sessions survive daemon restarts (only their SHA-256 is stored, in
@@ -56,6 +57,36 @@ can't read the access code.
 ### `POST /api/auth/logout`
 
 Ends the session and clears the cookie. → the status object.
+
+### OpenID Connect
+
+A `redirect` provider (`{"id":"oidc","kind":"redirect","label":"…","url":"api/auth/oidc/start"}`):
+the browser navigates to `url`.
+
+* `GET /api/auth/oidc/start` → `303` to the provider's authorization
+  endpoint (code flow, PKCE S256, nonce), with a short-lived `SameSite=Lax`
+  cookie (`__Host-orcax1_oidc`) holding the state. The redirect URI is
+  `<scheme>://<Host header>/api/auth/oidc/callback`.
+* `GET /api/auth/oidc/callback` checks the state against the cookie,
+  redeems the code at the token endpoint (`client_secret_basic`, else
+  `client_secret_post`, or just `client_id` for a public client), checks the
+  ID token's `iss`, `aud`/`azp`, `exp` (5 min leeway) and `nonce`, applies
+  the allow list, then sets the session cookie and `303`s to `/`. The token
+  comes straight from the provider over TLS, so its signature is not
+  checked (OpenID Connect Core 3.1.3.7). Failures `303` to
+  `/?login_error=<message>`, which the login page shows.
+
+Sessions end when the issuer, client ID or allow list changes, or OIDC is
+turned off.
+
+`GET /api/oidc` (logged in) →
+`{"config":{"enabled","label","issuer","client_id","client_secret":"","scopes","allowed":[…]},"secret_set":bool,"available":bool,"callback_path":"/api/auth/oidc/callback"}`.
+`available` is false when `--auth` leaves out `oidc`.
+
+`PUT /api/oidc` with `{"config":{…},"clear_secret":false}` saves it to
+`<state-dir>/oidc.json`. An empty `client_secret` keeps the saved one. When
+enabled, the issuer's discovery document is fetched first and a problem is
+a `400`.
 
 Errors from `/api/*` endpoints are JSON: `{"error":"message"}` with a 4xx/5xx
 status (400 bad path, 404 not found, 409 conflict such as a non-empty
@@ -123,7 +154,8 @@ another.
 wildcard is among the names), and no DNS credentials are stored. The issuer
 domain defaults to `letsencrypt.org` for Let's Encrypt; set `dns.issuer` for
 other CAs. The CA must offer the dns-persist-01 challenge.
-`--acme-ca-file` adds trusted roots for the CA and DNS APIs (e.g. a private
+`--ca-file` (formerly `--acme-ca-file`) adds trusted roots for the CA, DNS
+and OpenID Connect provider APIs (e.g. a private
 step-ca); otherwise the bundled Mozilla roots are used.
 
 State lives in `<state-dir>/acme/`: `config.json` (including DNS

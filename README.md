@@ -40,8 +40,8 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
 * Printing: exports a Bambu `.gcode.3mf` (plate G-code, thumbnails, and the
   slice_info the firmware reads), uploads it to the SD card, and starts it
   with AMS mapping, bed leveling, flow calibration and timelapse options.
-* Login with the printer's LAN access code (pluggable, so other methods such
-  as OIDC can be added), and an optional browser-trusted certificate from
+* Login with the printer's LAN access code or single sign-on through an
+  OpenID Connect provider (Kanidm, Authelia, Keycloak, …), and an optional browser-trusted certificate from
   Let's Encrypt or any ACME CA via DNS-01 (Cloudflare, RFC 2136 / TSIG,
   acme-dns, DynDNS-style TXT updates such as Hurricane Electric), or dns-persist-01 with a TXT record you set up once by hand, so
   the printer never needs to be reachable from the internet.

@@ -83,6 +83,29 @@ services. A login lasts 30 days (`ORCAX1D_SESSION_DAYS`) and ends early if
 the access code is changed on the printer. `ORCAX1D_AUTH=none` disables
 login (only do that on a network you fully trust).
 
+### Single sign-on (OpenID Connect)
+
+Settings → Single sign-on adds a "Sign in with …" button for an OpenID
+Connect provider (Kanidm, Authelia, Keycloak, authentik, …). Register a
+client whose redirect URL is `https://<printer address>/api/auth/oidc/callback`
+(one per address you open the printer by; the settings page shows the one
+for the current address), then enter the issuer, client ID and secret. With
+Kanidm, for example:
+
+```sh
+kanidm system oauth2 create orcax1 "OrcaX1" https://printer.example.com
+kanidm system oauth2 add-redirect-url orcax1 https://printer.example.com/api/auth/oidc/callback
+kanidm system oauth2 update-scope-map orcax1 printer_users openid profile email groups
+kanidm system oauth2 show-basic-secret orcax1
+```
+
+and use `https://<idm>/oauth2/openid/orcax1` as the issuer. Kanidm only
+issues tokens to members of scope-mapped groups; the allow list on the
+settings page can narrow it further (usernames, emails or `groups` entries).
+The access code login stays available unless you start the daemon with
+`ORCAX1D_AUTH=oidc`. If the provider uses a private CA, point
+`ORCAX1D_CA_FILE` at its PEM certificate.
+
 ## The certificate warning
 
 The browser needs a secure context (HTTPS) for the slicer's

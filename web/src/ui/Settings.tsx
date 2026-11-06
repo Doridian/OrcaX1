@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'preact/hooks'
-import { deleteAcmeCert, getAcme, info, issueAcme, registerAcmeAccount, saveAcme, uploadUpdate, type AcmeConfig, type AcmeView, type DaemonInfo } from '../api'
-import { auth, logout } from '../state/auth'
+import { deleteAcmeCert, getAcme, getOidc, info, issueAcme, registerAcmeAccount, saveAcme, saveOidc, uploadUpdate, type AcmeConfig, type AcmeView, type DaemonInfo, type OidcConfig, type OidcView } from '../api'
+import { auth, logout, refreshAuth } from '../state/auth'
 
 export function Settings() {
   return (
     <div class="settings">
       <Account />
+      {auth.value?.enabled && <SingleSignOn />}
       <Certificate />
       <Update />
     </div>
@@ -28,6 +29,98 @@ function Account() {
       ) : (
         <div class="warning">Authentication is disabled (<code>--auth none</code>): anyone who can reach this page controls the printer.</div>
       )}
+    </div>
+  )
+}
+
+function SingleSignOn() {
+  const [view, setView] = useState<OidcView | null>(null)
+  const [cfg, setCfg] = useState<OidcConfig | null>(null)
+  const [allowed, setAllowed] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const load = (v: OidcView) => {
+    setView(v)
+    setCfg(v.config)
+    setAllowed(v.config.allowed.join('\n'))
+  }
+  useEffect(() => { getOidc().then(load).catch((e) => setErr(e.message)) }, [])
+
+  if (!view || !cfg) return <div class="card"><h2>Single sign-on (OpenID Connect)</h2>{err ? <div class="error">{err}</div> : <div class="muted">Loading…</div>}</div>
+
+  const set = (patch: Partial<OidcConfig>) => { setCfg({ ...cfg, ...patch }); setSaved(false) }
+  const callback = `${location.origin}${view.callback_path}`
+  const save = async (clearSecret = false) => {
+    setBusy(true)
+    setErr(null)
+    setSaved(false)
+    try {
+      load(await saveOidc({ ...cfg, allowed: allowed.split(/[\s,]+/).filter(Boolean) }, clearSecret))
+      setSaved(true)
+      refreshAuth().catch(() => {})
+    } catch (e: any) { setErr(e?.message ?? String(e)) } finally { setBusy(false) }
+  }
+
+  return (
+    <div class="card">
+      <h2>Single sign-on (OpenID Connect)</h2>
+      <p class="muted small-text">
+        Log in through your identity provider (Kanidm, Authelia, Keycloak, authentik, …). Register a confidential
+        client (or a public one with PKCE) with this redirect URL, and one for every other address you open the
+        printer by:
+      </p>
+      <pre class="callback">{callback}</pre>
+      {!view.available && <div class="warning small-text">The daemon was started with <code>--auth</code> leaving out <code>oidc</code>; these settings are saved but not offered on the login page.</div>}
+
+      <div class="form-grid">
+        <label>Issuer</label>
+        <div>
+          <input type="text" value={cfg.issuer} placeholder="https://idm.example.com/oauth2/openid/orcax1" onInput={(e) => set({ issuer: e.currentTarget.value })} />
+          <div class="muted small-text">The URL in front of <code>/.well-known/openid-configuration</code>. Kanidm: <code>https://&lt;idm&gt;/oauth2/openid/&lt;client id&gt;</code>.</div>
+        </div>
+
+        <label>Client ID</label>
+        <input type="text" value={cfg.client_id} onInput={(e) => set({ client_id: e.currentTarget.value })} />
+
+        <label>Client secret</label>
+        <div>
+          <input type="password" autocomplete="off" value={cfg.client_secret} placeholder={view.secret_set ? '(saved, unchanged)' : 'empty for a public client'} onInput={(e) => set({ client_secret: e.currentTarget.value })} />
+          {view.secret_set && <div><button disabled={busy} onClick={() => { if (confirm('Remove the saved client secret (use as a public client)?')) save(true) }}>Remove saved secret</button></div>}
+        </div>
+
+        <label>Scopes</label>
+        <div>
+          <input type="text" value={cfg.scopes} onInput={(e) => set({ scopes: e.currentTarget.value })} />
+          <div class="muted small-text">Add <code>groups</code> to allow by group (the provider has to grant it).</div>
+        </div>
+
+        <label>Allowed users and groups</label>
+        <div>
+          <textarea rows={3} value={allowed} placeholder="anyone the provider lets through" onInput={(e) => { setAllowed(e.currentTarget.value); setSaved(false) }} />
+          <div class="muted small-text">
+            One per line: a username (<code>preferred_username</code>), verified email, <code>sub</code>, or an entry of the{' '}
+            <code>groups</code> claim (Kanidm: <code>printer_users@idm.example.com</code>). Empty lets in everyone who can
+            get a token for this client, so restrict access at the provider (Kanidm: the client's scope map) in that case.
+          </div>
+        </div>
+
+        <label>Button label</label>
+        <input type="text" value={cfg.label} placeholder="single sign-on" onInput={(e) => set({ label: e.currentTarget.value })} />
+
+        <label />
+        <label class="check">
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => set({ enabled: e.currentTarget.checked })} />
+          Offer on the login page
+        </label>
+      </div>
+
+      {err && <div class="error">{err}</div>}
+      {saved && <div class="muted small-text">Saved. Changing the issuer, client or allow list signs out existing single sign-on sessions.</div>}
+      <div class="btnrow">
+        <button class="primary" disabled={busy} onClick={() => save()}>{busy ? 'Checking provider…' : 'Save'}</button>
+      </div>
     </div>
   )
 }

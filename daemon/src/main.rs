@@ -43,6 +43,7 @@ pub struct App {
     /// Where the file API points: the SD dir, or ftps://<printer>/.
     pub store_desc: String,
     pub auth: auth::Auth,
+    pub oidc: Arc<auth::oidc::Oidc>,
     pub acme: Arc<acme::Acme>,
 }
 
@@ -176,6 +177,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/acme/issue", post(acme::issue))
         .route("/api/acme/account", post(acme::account))
         .route("/api/acme/cert", delete(acme::delete_cert))
+        .route("/api/oidc", get(auth::oidc::get).put(auth::oidc::put))
         .route_layer(axum::middleware::from_fn_with_state(
             app.clone(),
             auth::require,
@@ -185,6 +187,8 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/auth/status", get(auth::status))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
+        .route("/api/auth/oidc/start", get(auth::oidc::start))
+        .route(auth::oidc::CALLBACK_PATH, get(auth::oidc::callback))
         .route("/api/ca.crt", get(ca_handler))
         .route("/api", any(api_not_found))
         .route("/api/{*rest}", any(api_not_found))
@@ -377,7 +381,19 @@ async fn run(mut cfg: Config) -> Result<(), String> {
     std::fs::create_dir_all(&cfg.state_dir)
         .map_err(|e| format!("state dir {}: {e}", cfg.state_dir.display()))?;
     let auth_key = auth::load_key(&cfg.state_dir).map_err(|e| format!("auth key: {e}"))?;
-    let providers = auth::providers(&cfg.auth, &cfg, &auth_key)?;
+    // ORCAX1D_ACME_CA_FILE: the name before OIDC needed it too.
+    let ca_file = cfg
+        .ca_file
+        .clone()
+        .or_else(|| std::env::var_os("ORCAX1D_ACME_CA_FILE").map(Into::into));
+    let http = http_client::Http::new(ca_file.as_deref()).map_err(|e| format!("--ca-file: {e}"))?;
+    let oidc = Arc::new(auth::oidc::Oidc::new(
+        &cfg.state_dir,
+        http.clone(),
+        auth_key.clone(),
+        server_tls.is_some(),
+    ));
+    let providers = auth::providers(&cfg.auth, &cfg, &auth_key, &oidc)?;
     if providers.is_empty() {
         warn!(
             "authentication is disabled (--auth none): anyone who can reach the daemon can control the printer"
@@ -389,8 +405,6 @@ async fn run(mut cfg: Config) -> Result<(), String> {
         cfg.session_days,
         server_tls.is_some(),
     );
-    let http = http_client::Http::new(cfg.acme_ca_file.as_deref())
-        .map_err(|e| format!("--acme-ca-file: {e}"))?;
     let acme = acme::Acme::start(
         &cfg.state_dir,
         server_tls.as_ref().map(|t| t.resolver.clone()),
@@ -399,6 +413,7 @@ async fn run(mut cfg: Config) -> Result<(), String> {
 
     let app = Arc::new(App {
         auth,
+        oidc,
         acme,
         store,
         store_desc,

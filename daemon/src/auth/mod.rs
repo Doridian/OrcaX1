@@ -1,17 +1,17 @@
 //! Authentication: pluggable login providers and cookie sessions.
 //!
 //! A provider turns some proof (a form the UI renders from `ui()`) into an
-//! [`Identity`]; this module turns identities into sessions. Only the LAN
-//! access code provider exists today. A redirect-based provider (OAuth2 /
-//! OIDC) would add its own start/callback routes and call
-//! [`Auth::start_session`] from the callback; the session, cookie and
-//! middleware code stays the same.
+//! [`Identity`]; this module turns identities into sessions. Providers:
+//! the LAN access code (a form POSTed to `/api/auth/login`) and OpenID
+//! Connect (a redirect provider with its own start/callback routes that
+//! calls [`Auth::start_session`] from the callback).
 //!
 //! Sessions are opaque random tokens in an HttpOnly, SameSite=Strict cookie.
 //! Only their SHA-256 is kept (in memory and in `<state-dir>/sessions.json`,
 //! so logins survive restarts).
 
 pub mod access_code;
+pub mod oidc;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -48,6 +48,11 @@ pub trait AuthProvider: Send + Sync {
     /// form whose value is POSTed as `secret`. A redirect provider would use
     /// `{"kind":"redirect","label":…,"url":…}`.
     fn ui(&self) -> Value;
+    /// Whether the provider is set up. Inactive providers are not offered
+    /// and their sessions are not accepted.
+    fn active(&self) -> bool {
+        true
+    }
     /// Checks a login form (the JSON body of `POST /api/auth/login`).
     fn login<'a>(&'a self, form: &'a Value) -> BoxFut<'a, Result<Identity, LoginError>>;
     /// A value tied to the credential the session was created with. When it
@@ -70,6 +75,7 @@ pub fn providers(
     names: &[String],
     cfg: &Arc<crate::config::Config>,
     key: &ring::hmac::Key,
+    oidc: &Arc<oidc::Oidc>,
 ) -> Result<Vec<Arc<dyn AuthProvider>>, String> {
     let mut out: Vec<Arc<dyn AuthProvider>> = Vec::new();
     for n in names {
@@ -79,9 +85,10 @@ pub fn providers(
                 cfg.clone(),
                 key.clone(),
             ))),
+            "oidc" => out.push(oidc.clone()),
             other => {
                 return Err(format!(
-                    "unknown auth provider {other:?} (known: access-code, none)"
+                    "unknown auth provider {other:?} (known: access-code, oidc, none)"
                 ));
             }
         }
@@ -157,7 +164,8 @@ impl Auth {
         !self.providers.is_empty()
     }
 
-    fn provider(&self, id: &str) -> Option<&Arc<dyn AuthProvider>> {
+    /// A provider named in `--auth`, whether or not it is set up.
+    pub fn provider(&self, id: &str) -> Option<&Arc<dyn AuthProvider>> {
         self.providers.iter().find(|p| p.id() == id)
     }
 
@@ -247,7 +255,7 @@ impl Auth {
         // Rejected, not deleted: a credential that is briefly unreadable
         // shouldn't log everyone out for good.
         self.provider(&s.provider)
-            .is_some_and(|p| p.binding() == s.binding)
+            .is_some_and(|p| p.active() && p.binding() == s.binding)
             .then_some(s)
     }
 
@@ -265,7 +273,7 @@ impl Auth {
             "enabled": self.enabled(),
             "authenticated": !self.enabled() || session.is_some(),
             "user": session.map(|s| json!({ "provider": s.provider, "name": s.name, "expires": s.expires })),
-            "providers": self.providers.iter().map(|p| {
+            "providers": self.providers.iter().filter(|p| p.active()).map(|p| {
                 let mut ui = p.ui();
                 ui["id"] = json!(p.id());
                 ui
@@ -301,6 +309,7 @@ pub async fn login(
     let id = form.get("provider").and_then(Value::as_str).unwrap_or("");
     let provider = auth
         .provider(id)
+        .filter(|p| p.active())
         .ok_or_else(|| ApiError::bad_request(format!("unknown provider {id:?}")))?
         .clone();
     let ip = peer.ip().to_canonical();
