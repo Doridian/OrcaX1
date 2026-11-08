@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Headless check of the engine + profile bundle: slices a 20 mm cube with an
-// X1C profile and exports a printable .gcode.3mf.
+// X1C profile and exports a printable .gcode.3mf. Orca's defaults (parsed from
+// PrintConfig.cpp) for filament and printer settings the presets leave out are
+// applied too, and checked against the config block of the G-code.
 // Usage: node scripts/engine-smoke.mjs [out.gcode.3mf]
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -51,10 +53,21 @@ const enc = (o) => new TextEncoder().encode(JSON.stringify(o))
 
 let t = Date.now()
 await session.init(enc({ bed_size_x: 256, bed_size_y: 256 }))
-await session.applyProfile('orca.profile-json', enc(printer.settings))
+// Settings tab options the presets don't set get Orca's default, as the settings editors show them.
+const defaulted = {}
+function withDefaults(schema, settings, perFilament) {
+  const out = { ...settings }
+  for (const [k, d] of Object.entries(schema.options)) {
+    if (k in settings || k in proc.settings || d.default === undefined) continue
+    out[k] = perFilament && !Array.isArray(d.default) ? [d.default] : d.default
+    defaulted[k] = out[k]
+  }
+  return out
+}
+await session.applyProfile('orca.profile-json', enc(withDefaults(bundle.printerSchema, printer.settings, false)))
 await session.applyProfile('orca.profile-json', enc(proc.settings))
 const filFrag = {}
-for (const [k, v] of Object.entries(fil.settings)) filFrag[k] = Array.isArray(v) ? v : [v]
+for (const [k, v] of Object.entries(withDefaults(bundle.filamentSchema, fil.settings, true))) filFrag[k] = Array.isArray(v) ? v : [v]
 await session.applyProfile('orca.profile-json', enc(filFrag))
 await session.applyProfile('orca.native-json', enc({
   curr_bed_type: 'Textured PEI Plate',
@@ -85,6 +98,30 @@ const gcodeAsset = plate.assets.find((a) => a.kind === 'gcode')
 const gcode = new TextDecoder().decode(await session.getAsset(gcodeAsset.id))
 console.log('gcode bytes', gcode.length)
 console.log(gcode.split('\n').filter((l) => l.startsWith('; ')).slice(0, 30).join('\n'))
+
+// The engine must have taken every default (the G-code ends with "; key = value" for the full config).
+const block = new Map()
+for (const m of gcode.matchAll(/^; ([a-zA-Z0-9_]+) = (.*)$/gm)) block.set(m[1], m[2])
+const same = (want, got) => {
+  const w = (Array.isArray(want) ? want : [want]).map(String)
+  // Strings are written quoted and escaped ("a","b"); numbers and enums bare (a,b).
+  let g
+  try { g = got.startsWith('"') ? JSON.parse(`[${got}]`) : got.split(/[,;]/).map((x) => x.trim()) } catch { g = [got] }
+  const eq = (a, b) => a === b || (a !== '' && b !== '' && Number(a) === Number(b))
+  // Per-filament / per-extruder values: one entry each (the slice used one filament and one extruder).
+  return eq(w.join(','), got) || (g.length === w.length && w.every((x, i) => eq(x, g[i]))) || (w.length >= 1 && g.length === 1 && eq(w[0], g[0]))
+}
+const bad = [], missing = []
+for (const [k, v] of Object.entries(defaulted)) {
+  if (!block.has(k)) { missing.push(k); continue }
+  if (!same(v, block.get(k))) bad.push(`${k}: applied ${JSON.stringify(v)}, G-code has ${JSON.stringify(block.get(k))}`)
+}
+console.log(`defaults applied: ${Object.keys(defaulted).length}, in G-code config: ${Object.keys(defaulted).length - missing.length}`)
+if (missing.length) console.log('not in the G-code config block:', missing.join(', '))
+if (bad.length) {
+  console.error('defaults the engine did not take:\n  ' + bad.join('\n  '))
+  process.exit(1)
+}
 const exp = await session.export('project.3mf', { schemaVersion: '0.7.0', preservation: 'best-effort', includeSliceArtifacts: true })
 console.log('export', JSON.stringify(exp))
 const bytes = await session.getAsset(exp.asset.id)

@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { processSettingsSchema } from './orca-config.mjs'
+import { presetSettingsSchemas } from './orca-tabs.mjs'
 
 const ORCA_TAG = process.env.ORCA_TAG ?? 'v2.4.2'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -41,13 +42,17 @@ if (absent.length) execFileSync('git', ['-C', orcaSrc, 'sparse-checkout', 'add',
 // value for a scalar option, but Bambu presets store some scalars per variant.
 const optionTypes = {}
 const printConfig = readFileSync(join(orcaSrc, 'src/libslic3r/PrintConfig.cpp'), 'utf8')
-for (const m of printConfig.matchAll(/this->add(?:_nullable)?\("([a-z0-9_]+)",\s*(co[A-Za-z0-9]+)\)/g)) {
+for (const m of printConfig.matchAll(/this->add(?:_nullable)?\("([A-Za-z0-9_]+)",\s*(co[A-Za-z0-9]+)\)/g)) {
   optionTypes[m[1]] ??= m[2]
 }
 const VECTOR_TYPES = new Set(['coFloats', 'coInts', 'coStrings', 'coPercents', 'coFloatsOrPercents', 'coPoints', 'coBools', 'coEnums', 'coPointsGroups', 'coIntsGroups'])
 const scalarKeys = Object.keys(optionTypes).filter((k) => !VECTOR_TYPES.has(optionTypes[k])).sort()
 
 const processSchema = processSettingsSchema(printConfig,
+  readFileSync(join(orcaSrc, 'src/slic3r/GUI/Tab.cpp'), 'utf8'),
+  readFileSync(join(orcaSrc, 'src/libslic3r/PrintConfigConstants.hpp'), 'utf8'))
+// Filament and printer settings tabs (see orca-tabs.mjs).
+const { filamentSchema, printerSchema } = presetSettingsSchemas(printConfig,
   readFileSync(join(orcaSrc, 'src/slic3r/GUI/Tab.cpp'), 'utf8'),
   readFileSync(join(orcaSrc, 'src/libslic3r/PrintConfigConstants.hpp'), 'utf8'))
 
@@ -161,6 +166,8 @@ const bundle = {
   scalarKeys,
   source: `OrcaSlicer ${ORCA_TAG} resources/profiles/BBL (vendor version ${vendor.version})`,
   processSchema,
+  filamentSchema,
+  printerSchema,
   models,
   printers: printerOut,
   processes: processOut,
@@ -171,6 +178,9 @@ const outDir = join(ROOT, 'web/public/profiles')
 mkdirSync(outDir, { recursive: true })
 const json = JSON.stringify(bundle)
 writeFileSync(join(outDir, 'bbl-x1.json'), json)
+for (const [n, sc] of [['filament', filamentSchema], ['printer', printerSchema]]) {
+  console.log(`${n} settings: ${sc.pages.length} pages, ${Object.keys(sc.options).length} options`)
+}
 console.log(`process settings: ${processSchema.pages.length} pages, ${Object.keys(processSchema.options).length} options`)
 console.log(`option types: ${Object.keys(optionTypes).length} (${scalarKeys.length} scalar)`)
 console.log(`profiles: ${printerOut.length} printers, ${processOut.length} processes, ${filamentOut.length} filaments, ${(json.length / 1e6).toFixed(1)} MB`)

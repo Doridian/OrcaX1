@@ -34,7 +34,11 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
   tab, with Orca's pages, groups, labels, tooltips, Simple / Advanced / Expert
   modes and rules for hiding or greying out options that don't apply,
   generated at build time from the OrcaSlicer sources the engine is built from;
-  plus search and a raw editor for every key. Changes persist in the browser.
+  plus search and a raw editor for every key. Orca's Filament and Printer
+  settings tabs are there too (the gear next to each filament, "Settings…"
+  next to the printer), as slicer-only changes on top of the presets: they
+  are never sent to the printer, and a tray's changes are dropped when its
+  filament preset changes. Changes persist in the browser.
 * The slicer mirrors the printer: the filament list is the AMS trays and
   external spool (one slot per tray, matched by Bambu filament id), and the
   printer model (from its discovery broadcast) and nozzle size and type are

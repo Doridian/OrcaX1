@@ -103,7 +103,21 @@ function fallbackPreset(fils: FilamentPreset[]): string {
   return (fils.find((f) => f.vendor === 'Generic' && f.type === 'PLA') ?? fils.find((f) => f.type === 'PLA') ?? fils[0])?.name ?? ''
 }
 
+/**
+ * Slicer-only setting overrides belong to the tray's filament preset: they are
+ * kept while the tray keeps that preset (also when its color changes or the
+ * spool runs out) and dropped when the preset changes, from this UI or at the
+ * printer, since values tuned for one material rarely suit another.
+ */
+function keepOverrides(slot: FilamentSlot, prev: FilamentSlot | undefined): FilamentSlot {
+  return prev?.overrides && prev.preset === slot.preset ? { ...slot, overrides: prev.overrides } : slot
+}
+
 function slotFor(b: ProfileBundle, printer: string, fils: FilamentPreset[], t: Tray, prev: FilamentSlot | undefined): FilamentSlot {
+  return keepOverrides(presetSlot(b, printer, fils, t, prev), prev)
+}
+
+function presetSlot(b: ProfileBundle, printer: string, fils: FilamentPreset[], t: Tray, prev: FilamentSlot | undefined): FilamentSlot {
   const p = pendingTrays.value[t.id]
   if (p) return { preset: p.preset, color: p.color, tray: t.id }
   if (!t.info) {
