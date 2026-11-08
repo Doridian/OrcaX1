@@ -450,3 +450,23 @@ export function presetSettingsSchemas(printConfigSrc, tabSrc, constantsSrc = '')
     printerSchema: withDefs(parsePrinterTab(tabSrc), defs, 'Printer'),
   }
 }
+
+/**
+ * Orca's per-material temperature table (src/libslic3r/MaterialType.cpp),
+ * used by the filament checks: nozzle range and chamber range per filament_type.
+ * @returns {{ default: number[], types: Record<string, number[]> }} [min, max, chamberMin, chamberMax]
+ */
+export function materialTemperatures(src) {
+  const c = (name) => {
+    const m = new RegExp(`\\b${name}\\s*=\\s*(\\d+)\\s*;`).exec(src)
+    if (!m) throw new Error(`MaterialType.cpp: ${name} not found`)
+    return Number(m[1])
+  }
+  const types = {}
+  for (const m of src.matchAll(/\{\s*"([^"]+)"\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/g)) {
+    types[m[1]] = [m[2], m[3], m[4], m[5]].map(Number)
+  }
+  const rows = (src.match(/^\s*\{\s*"/gm) ?? []).length
+  if (rows < 20 || Object.keys(types).length !== rows) throw new Error(`MaterialType.cpp: parsed ${Object.keys(types).length} of ${rows} material rows`)
+  return { default: ['DEFAULT_MIN_TEMP', 'DEFAULT_MAX_TEMP', 'DEFAULT_CHAMBER_MIN_TEMP', 'DEFAULT_CHAMBER_MAX_TEMP'].map(c), types }
+}

@@ -6,7 +6,7 @@ import { filamentToggles, printerToggles } from '../slicer/presetToggles'
 import { MODES, type SettingsSchema } from '../slicer/schema'
 import type { Toggles } from '../slicer/toggles'
 import { trayName } from '../state/hardware'
-import { filamentAccess, filamentScalar, printerAccess, printerScalar, type SettingsAccess } from '../state/presetSettings'
+import { filamentAccess, filamentScalar, presetNotices, printerAccess, printerScalar, type SettingsAccess } from '../state/presetSettings'
 import { currentPrinter, sel, settingsMode } from '../state/settings'
 import { OptionGroups, shownGroups } from './OptionRow'
 
@@ -15,7 +15,7 @@ type Editing = { kind: 'printer' } | { kind: 'filament'; index: number }
 /** The settings dialog that is open, if any. */
 export const editing = signal<Editing | null>(null)
 
-export const openFilamentSettings = (index: number) => { editing.value = { kind: 'filament', index } }
+export const openFilamentSettings = (index: number) => { presetNotices.value = []; editing.value = { kind: 'filament', index } }
 export const openPrinterSettings = () => { editing.value = { kind: 'printer' } }
 
 export function PresetSettingsHost() {
@@ -56,6 +56,16 @@ export function PresetSettingsHost() {
       </header>
       <div class="body">
         <p class="muted small-text">{note}</p>
+        {e.kind === 'filament' && presetNotices.value.length > 0 && (
+          <div class="process-notices">
+            {presetNotices.value.map((text, i) => (
+              <div class="process-notice" role="status">
+                <span class="pre-line">{text}</span>
+                <button class="reset" title="Dismiss" onClick={() => { presetNotices.value = presetNotices.value.filter((_, j) => j !== i) }}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
         {access
           ? <SettingsTabs key={`${e.kind}-${e.kind === 'filament' ? e.index : ''}`} schema={access.schema} access={access} toggles={toggles} />
           : <div class="muted">This filament slot no longer exists.</div>}

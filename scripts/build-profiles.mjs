@@ -13,14 +13,14 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { processSettingsSchema } from './orca-config.mjs'
-import { presetSettingsSchemas } from './orca-tabs.mjs'
+import { materialTemperatures, presetSettingsSchemas } from './orca-tabs.mjs'
 
 const ORCA_TAG = process.env.ORCA_TAG ?? 'v2.4.2'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PRINTER_MODELS = ['Bambu Lab X1 Carbon', 'Bambu Lab X1', 'Bambu Lab X1E']
 
 // Option definitions and the settings tab layout (see orca-config.mjs).
-const SOURCES = ['/src/libslic3r/PrintConfig.cpp', '/src/libslic3r/PrintConfigConstants.hpp', '/src/slic3r/GUI/Tab.cpp']
+const SOURCES = ['/src/libslic3r/PrintConfig.cpp', '/src/libslic3r/PrintConfigConstants.hpp', '/src/slic3r/GUI/Tab.cpp', '/src/libslic3r/MaterialType.cpp']
 
 const args = process.argv.slice(2)
 const srcArg = args.indexOf('--orca-src')
@@ -55,6 +55,7 @@ const processSchema = processSettingsSchema(printConfig,
 const { filamentSchema, printerSchema } = presetSettingsSchemas(printConfig,
   readFileSync(join(orcaSrc, 'src/slic3r/GUI/Tab.cpp'), 'utf8'),
   readFileSync(join(orcaSrc, 'src/libslic3r/PrintConfigConstants.hpp'), 'utf8'))
+const materialTemps = materialTemperatures(readFileSync(join(orcaSrc, 'src/libslic3r/MaterialType.cpp'), 'utf8'))
 
 const BBL = join(orcaSrc, 'resources/profiles/BBL')
 const vendor = JSON.parse(readFileSync(BBL + '.json', 'utf8'))
@@ -168,6 +169,7 @@ const bundle = {
   processSchema,
   filamentSchema,
   printerSchema,
+  materialTemps,
   models,
   printers: printerOut,
   processes: processOut,

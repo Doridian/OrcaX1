@@ -6,7 +6,8 @@
 // ("Direct Drive Standard" / "Direct Drive High Flow") for some options, and
 // buildEngineConfig picks the active variant after applying overrides, so an
 // edit changes only the variant that is active while editing (as in Orca).
-import { computed } from '@preact/signals'
+import { computed, signal } from '@preact/signals'
+import { filamentChanged } from '../slicer/filamentRules'
 import {
   FILAMENT_OPTIONS_WITH_VARIANT, PRINTER_OPTIONS_WITH_VARIANT_1, PRINTER_OPTIONS_WITH_VARIANT_2, variantIndex,
   type Overrides, type Settings,
@@ -176,11 +177,29 @@ function filamentStore(index: number): Store | null {
 export function filamentAccess(index: number): SettingsAccess | null {
   const st = filamentStore(index)
   if (!st?.schema) return null
-  return access(st, (k) => FILAMENT_LOCKED[k] ?? null, (k) => {
+  const a = access(st, (k) => FILAMENT_LOCKED[k] ?? null, (k) => {
     const raw = k.replace(/^filament_/, '')
     return k.startsWith('filament_ironing_') ? processScalar(raw) : printerScalar(raw)
   })
+  return {
+    ...a,
+    set(k, v) {
+      a.set(k, v)
+      // Orca's checks (filamentRules.ts) on the stored result; each write re-reads the slot.
+      presetNotices.value = []
+      filamentChanged(k, {
+        get: (key) => filamentScalar(index, key),
+        set: (key, value) => { const s = filamentStore(index); if (s) write(s, key, value) },
+        printer: printerScalar,
+        temps: bundle.value?.materialTemps,
+        notify: (text) => { presetNotices.value = [...presetNotices.value, text] },
+      })
+    },
+  }
 }
+
+/** Warnings from the last filament edit (Orca's message boxes), shown in the settings dialog. */
+export const presetNotices = signal<string[]>([])
 
 /** Effective value of a filament option for a slot (for toggles). */
 export const filamentScalar = (index: number, key: string) => {

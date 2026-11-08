@@ -1,3 +1,4 @@
+import type { MaterialTemps } from './filamentRules'
 import type { ProcessSchema, SettingsSchema } from './schema'
 
 // Bambu Lab X1 system profiles (built by scripts/build-profiles.mjs) and the
@@ -33,6 +34,8 @@ export interface ProfileBundle {
   /** Orca's filament and printer settings tabs. */
   filamentSchema: SettingsSchema
   printerSchema: SettingsSchema
+  /** Orca's per-material temperature ranges (MaterialType.cpp), for the filament checks. */
+  materialTemps: MaterialTemps
   models: { name: string; default_bed_type: string | null; default_materials: string[]; model_id: string | null }[]
   printers: PrinterPreset[]
   processes: ProcessPreset[]
