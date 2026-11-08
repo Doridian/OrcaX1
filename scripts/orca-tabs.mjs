@@ -1,7 +1,8 @@
-// Reads the layout of OrcaSlicer's filament and printer settings tabs
-// (TabFilament::build and TabPrinter::build_fff in src/slic3r/GUI/Tab.cpp).
+// Reads the layout of OrcaSlicer's process, filament and printer settings tabs
+// (TabPrint::build, TabFilament::build and TabPrinter::build_fff in
+// src/slic3r/GUI/Tab.cpp).
 //
-// Unlike TabPrint::build, these are not a flat list of append calls: they use
+// The filament and printer tabs are not a flat list of append calls: they use
 // helper lambdas, loops over key lists, Option variables with relabelled
 // options, helper member functions and (for the printer) pages that are built
 // per extruder. This is a small statement interpreter for the subset of C++
@@ -332,6 +333,11 @@ export function parseTabFunction(tabSrc, cls, fn, opts = { conds: {} }) {
   return runFunction(preprocess(tabSrc), cls, fn, opts)
 }
 
+/** Process settings tab: TabPrint::build(). */
+export function parseProcessTab(tabSrc) {
+  return runFunction(preprocess(tabSrc), 'TabPrint', 'build', { conds: {} })
+}
+
 /** Filament settings tab: TabFilament::build(). */
 export function parseFilamentTab(tabSrc) {
   return runFunction(preprocess(tabSrc), 'TabFilament', 'build', { conds: {} })
@@ -374,6 +380,8 @@ function withDefs(pages, defs, what) {
       const { category, enum_type, ...rest } = d
       options[k] = rest
     }
+    // The definition already says so (and the editors read it from there).
+    if (l.wide && defs[l.keys[0]]?.full_width) delete l.wide
     if (l.fullLabel) {
       delete l.fullLabel
       const d = defs[l.keys[0]]
@@ -439,13 +447,16 @@ function addMachineLimitDefs(src, defs) {
   }
 }
 
-/** Filament and printer settings tabs with option definitions. */
-export function presetSettingsSchemas(printConfigSrc, tabSrc, constantsSrc = '') {
+/** Process, filament and printer settings tabs with option definitions. */
+export function settingsSchemas(printConfigSrc, tabSrc, constantsSrc = '') {
   const constants = Object.fromEntries([...constantsSrc.matchAll(/^#define\s+(\w+)\s+(\S+)/gm)].map((m) => [m[1], m[2]]))
   const defs = parseOptionDefs(printConfigSrc, constants)
+  // The process tab only uses options defined directly.
+  const processSchema = withDefs(parseProcessTab(tabSrc), { ...defs }, 'Process')
   addFilamentOverrideDefs(printConfigSrc, defs)
   addMachineLimitDefs(printConfigSrc, defs)
   return {
+    processSchema,
     filamentSchema: withDefs(parseFilamentTab(tabSrc), defs, 'Filament'),
     printerSchema: withDefs(parsePrinterTab(tabSrc), defs, 'Printer'),
   }

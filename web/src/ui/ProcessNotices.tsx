@@ -1,4 +1,4 @@
-import { dismissNotice, processNotices } from '../state/processRules'
+import { dismissNotice, processNotices } from '../state/notices'
 
 /** Corrections Orca's rules made to the process settings after the last change. */
 export function ProcessNotices() {

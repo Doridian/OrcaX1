@@ -3,8 +3,12 @@
 // check_nozzle_temperature_initial_layer_range, check_filament_max_volumetric_speed,
 // check_chamber_temperature and check_chamber_minimal_temperature from
 // OrcaSlicer v2.4.2 (src/slic3r/GUI/ConfigManipulation.cpp), as wired up in
-// TabFilament (Tab.cpp). Orca shows these as OK-only message boxes; here they
-// become notices. Orca has commented out the bed temperature checks.
+// TabFilament (Tab.cpp), and the filament keys of Tab::on_value_change (the
+// long retraction warning, filament diameter <-> pellet flow coefficient) and
+// the option groups' custom G-code check. Orca shows these as OK-only message
+// boxes; here they become notices. Orca has commented out the bed temperature
+// checks.
+import { gcodeWarning } from './gcodeCheck'
 
 /** Orca's MaterialType table: [min, max, chamberMin, chamberMax] per filament_type. */
 export interface MaterialTemps { default: number[]; types: Record<string, number[]> }
@@ -64,9 +68,34 @@ function chamberMinimal(h: FilamentRuleHost) {
   }
 }
 
+/** Preset::convert_* (src/libslic3r/Preset.hpp), serialized like Orca's floats. */
+const float = (n: number) => String(Number(n.toPrecision(12)))
+export const pelletFlowToDiameter = (k: number) => float(Math.sqrt(4 / (Math.PI * k)))
+export const diameterToPelletFlow = (d: number) => float(4 / (d * d * Math.PI))
+
 /** Run Orca's checks for a changed filament option. */
 export function filamentChanged(key: string, h: FilamentRuleHost) {
+  const gcode = gcodeWarning(key, h.get(key))
+  if (gcode) h.notify(gcode)
   switch (key) {
+    case 'filament_long_retractions_when_cut':
+      if (h.get(key) === '1') {
+        h.notify('Experimental feature: Retracting and cutting off the filament at a greater distance during filament changes to minimize flush. '
+          + 'Although it can notably reduce flush, it may also elevate the risk of nozzle clogs or other printing complications. '
+          + 'Please use with the latest printer firmware.')
+      }
+      return
+    // Orca keeps the two in step without asking.
+    case 'filament_diameter': {
+      const d = parseFloat(h.get(key))
+      if (d > 0) h.set('pellet_flow_coefficient', diameterToPelletFlow(d))
+      return
+    }
+    case 'pellet_flow_coefficient': {
+      const k = parseFloat(h.get(key))
+      if (k > 0) h.set('filament_diameter', pelletFlowToDiameter(k))
+      return
+    }
     case 'nozzle_temperature_range_low':
     case 'nozzle_temperature_range_high':
       return recommendedRange(h)

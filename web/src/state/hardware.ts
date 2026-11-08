@@ -6,7 +6,9 @@ import { batch, computed, effect, signal } from '@preact/signals'
 import { compatibleFilaments, filamentForTray, type FilamentPreset, type FilamentSlot, type ProfileBundle } from '../slicer/profiles'
 import { cmd, modelId, mqttConnected, status } from './printer'
 import { objects, touch } from './project'
-import { bundle, sel, setPrinter, updateSel } from './settings'
+import { ask, choose } from './confirm'
+import { notify } from './notices'
+import { bundle, describeChanges, processScalar, sel, setPrinter, unsavedChanges, updateSel, writeProcessScalar } from './settings'
 
 export const EXTERNAL = 254
 /** How long an edit is shown as pending before the UI falls back to what the printer reports. */
@@ -148,7 +150,12 @@ function syncPrinter() {
   if (model !== cur?.model || Number(cur?.nozzle) !== d) {
     const want = b.printers.find((p) => p.model === model && Number(p.nozzle) === d)
       ?? (model !== cur?.model ? b.printers.find((p) => p.model === model) : undefined)
-    if (want && want.name !== s.printer) setPrinter(want.name)
+    if (want && want.name !== s.printer) {
+      // Driven by the printer, so nothing to ask: printer edits go, process
+      // and filament edits stay while their preset does (see setPrinter).
+      const lost = describeChanges(setPrinter(want.name))
+      if (lost) notify(`The printer reports a different ${model !== cur?.model ? 'model' : 'nozzle'}, so the slicer switched to "${want.name}" and discarded ${lost} that belonged to "${s.printer}".`)
+    }
   }
   if (!n) return
   const o = { ...sel.peek().printerOverrides }
@@ -156,6 +163,10 @@ function syncPrinter() {
   else delete o.nozzle_type
   if (JSON.stringify(o) !== JSON.stringify(sel.peek().printerOverrides)) updateSel({ printerOverrides: o })
 }
+
+/** Process options holding a 1-based filament number (0 = default). */
+const FILAMENT_REFS = ['support_filament', 'support_interface_filament', 'wipe_tower_filament', 'outer_wall_filament_id', 'inner_wall_filament_id',
+  'sparse_infill_filament_id', 'internal_solid_filament_id', 'top_surface_filament_id', 'bottom_surface_filament_id']
 
 function syncFilaments() {
   const b = bundle.value, list = trays.value
@@ -174,6 +185,16 @@ function syncFilaments() {
     })
     if (remapped.some((o, i) => o !== objects.peek()[i])) { objects.value = remapped; touch() }
     updateSel({ filaments: next })
+    // The process options that name a filament follow their tray too; one
+    // whose tray is gone falls back to the default, as when Orca deletes a
+    // filament (Plater::on_filaments_delete).
+    for (const k of FILAMENT_REFS) {
+      const v = Math.trunc(Number(processScalar(k)) || 0)
+      if (v <= 0) continue
+      const tray = oldTray[v - 1]
+      const at = tray === undefined ? (v <= next.length ? v - 1 : -1) : idx.get(tray) ?? -1
+      if (at + 1 !== v) writeProcessScalar(k, String(at + 1))
+    }
   })
 }
 
@@ -222,11 +243,38 @@ export function editNozzle(diameter: number, type: string): boolean {
   return true
 }
 
-/** Switches the printer model by hand (only offered until the printer announces it), keeping the nozzle. */
-export function setModel(model: string) {
+/**
+ * Switches the printer model by hand (only offered until the printer
+ * announces it), keeping the nozzle. Like Orca's printer switch
+ * (Tab::select_preset), unsaved edits are offered for transfer: process and
+ * filament edits can move to the new printer's presets, printer edits can
+ * only be discarded. Resolves false if the user cancelled.
+ */
+export async function setModel(model: string): Promise<boolean> {
   const b = bundle.value
-  if (!b) return
+  if (!b) return false
   const d = nozzle.value?.diameter ?? Number(b.printers.find((p) => p.name === sel.value.printer)?.nozzle ?? 0.4)
   const p = b.printers.find((x) => x.model === model && Number(x.nozzle) === d) ?? b.printers.find((x) => x.model === model)
-  if (p) setPrinter(p.name)
+  if (!p) return false
+  if (p.name === sel.value.printer) return true
+  const c = unsavedChanges()
+  if (c.process || c.filament) {
+    const printerNote = c.printer ? ` Your ${describeChanges({ ...c, process: 0, filament: 0 })} will be discarded either way.` : ''
+    const choice = await choose({
+      title: 'Unsaved changes',
+      body: `Switching to "${p.name}". Transfer your ${describeChanges({ ...c, printer: 0 })} to the new printer's presets, or discard them?${printerNote}`,
+      confirm: 'Transfer', alt: 'Discard', cancel: 'Cancel',
+    })
+    if (choice === 'cancel') return false
+    const keep = choice === 'confirm'
+    setPrinter(p.name, { process: keep, filaments: keep })
+    return true
+  }
+  if (c.printer && !(await ask({
+    title: 'Unsaved changes',
+    body: `Switching to "${p.name}" discards your ${describeChanges(c)}.`,
+    confirm: 'Discard and switch', cancel: 'Cancel',
+  }))) return false
+  setPrinter(p.name)
+  return true
 }

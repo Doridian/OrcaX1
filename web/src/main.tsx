@@ -7,6 +7,7 @@ import { connectPrinter, disconnectPrinter } from './state/printer'
 import { initHardwareSync } from './state/hardware'
 import { initSettings } from './state/settings'
 import { initAutosave } from './state/autosave'
+import { initProcessRules } from './state/processRules'
 import './styles.css'
 
 function Root() {
@@ -18,6 +19,7 @@ function Root() {
 initSettings()
 initAutosave()
 initHardwareSync()
+initProcessRules()
 effect(() => {
   if (auth.value?.authenticated) connectPrinter()
   else disconnectPrinter()

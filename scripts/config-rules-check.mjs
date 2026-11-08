@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Headless check of web/src/slicer/configRules.ts (Orca's process value rules)
-// against the X1C 0.20mm Standard profile. Needs Node 23.6+ (TypeScript
+// Headless check of Orca's value rules against the X1 profiles:
+// web/src/slicer/configRules.ts (process), printerRules.ts, filamentRules.ts,
+// gcodeCheck.ts, and the filament clamp of buildEngineConfig. Needs Node 23.6+ (TypeScript
 // type stripping) and the profile bundle (scripts/build-profiles.mjs).
 // Usage: node scripts/config-rules-check.mjs
 import assert from 'node:assert/strict'
@@ -20,7 +21,11 @@ registerHooks({
 })
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const { processChanged, newRuleState } = await import(join(ROOT, 'web/src/slicer/configRules.ts'))
+const { processChanged, processUpdate, newRuleState } = await import(join(ROOT, 'web/src/slicer/configRules.ts'))
+const { printerChanged } = await import(join(ROOT, 'web/src/slicer/printerRules.ts'))
+const { filamentChanged } = await import(join(ROOT, 'web/src/slicer/filamentRules.ts'))
+const { gcodeWarning } = await import(join(ROOT, 'web/src/slicer/gcodeCheck.ts'))
+const { clampFilamentRefs } = await import(join(ROOT, 'web/src/slicer/profiles.ts'))
 const bundle = JSON.parse(readFileSync(join(ROOT, 'web/public/profiles/bbl-x1.json'), 'utf8'))
 const printer = bundle.printers.find((p) => p.name === 'Bambu Lab X1 Carbon 0.4 nozzle').settings
 const preset = bundle.processes.find((p) => p.name === '0.20mm Standard @BBL X1C').settings
@@ -35,10 +40,10 @@ const SUPPORT_PLA = filament('Bambu Support For PLA @BBL X1C')
  * Sets `changes` as the user, runs the rules and returns the overrides, the
  * questions asked and the notices. `answers` are the replies to the questions, in order.
  */
-async function run(changes, { answers = [], initial = {}, filaments = [PLA], used = ['PLA'], simple = false, state = newRuleState() } = {}) {
+async function run(changes, { answers = [], initial = {}, filaments = [PLA], used = ['PLA'], simple = false, state = newRuleState(), proc = preset, machine = printer, update = false } = {}) {
   const over = { ...initial }
   const get = (k) => {
-    const v = over[k] ?? preset[k] ?? bundle.processSchema.options[k]?.default
+    const v = over[k] ?? proc[k] ?? bundle.processSchema.options[k]?.default
     return (Array.isArray(v) ? v[0] : v) ?? ''
   }
   const asked = []
@@ -46,7 +51,7 @@ async function run(changes, { answers = [], initial = {}, filaments = [PLA], use
   const host = {
     get,
     set: (k, v) => { over[k] = v },
-    printer,
+    printer: machine,
     filaments,
     usedFilamentTypes: () => used,
     simpleMode: simple,
@@ -62,11 +67,130 @@ async function run(changes, { answers = [], initial = {}, filaments = [PLA], use
     over[k] = v
     await processChanged(k, prev, host, state)
   }
+  if (update) await processUpdate(host, state)
   assert.equal(asked.length, answers.length, `asked ${JSON.stringify(asked)}`)
   return { get, over, asked, notices }
 }
 
+/** Printer rules on the X1C 0.4 preset (Standard flow: variant 0, machine limits [normal, silent] per variant). */
+async function runPrinter(changes, { answers = [], initial = {} } = {}) {
+  const over = { ...initial }
+  const all = (k) => { const v = over[k] ?? printer[k] ?? bundle.printerSchema.options[k]?.default; return Array.isArray(v) ? v : v === undefined ? [] : [v] }
+  const asked = [], notices = []
+  const host = {
+    get: (k) => all(k)[0] ?? '',
+    getAll: all,
+    set: (k, v) => { const cur = over[k] ?? printer[k]; over[k] = Array.isArray(cur) ? [v, ...cur.slice(1)] : v },
+    setAll: (k, v) => { over[k] = v },
+    ask: async (q) => {
+      asked.push(q.title)
+      assert.ok(asked.length <= answers.length, `unexpected question "${q.title}"`)
+      return answers[asked.length - 1]
+    },
+    notify: (t) => notices.push(t),
+  }
+  let result
+  for (const [k, v] of Object.entries(changes)) { host.set(k, v); result = await printerChanged(k, host) }
+  assert.equal(asked.length, answers.length, `asked ${JSON.stringify(asked)}`)
+  return { get: host.get, all, over, notices, result }
+}
+
+/** Filament rules on PLA Basic. */
+function runFilament(changes) {
+  const s = bundle.filaments.find((f) => f.name === 'Bambu PLA Basic @BBL X1C').settings
+  const over = {}, notices = []
+  const host = {
+    get: (k) => { const v = over[k] ?? s[k] ?? bundle.filamentSchema.options[k]?.default; return (Array.isArray(v) ? v[0] : v) ?? '' },
+    set: (k, v) => { over[k] = v },
+    printer: (k) => { const v = printer[k]; return (Array.isArray(v) ? v[0] : v) ?? '' },
+    temps: bundle.materialTemps,
+    notify: (t) => notices.push(t),
+  }
+  for (const [k, v] of Object.entries(changes)) { over[k] = v; filamentChanged(k, host) }
+  return { get: host.get, over, notices }
+}
+
 const tests = {
+  async 'loading any stock process on any compatible printer changes and asks nothing'() {
+    let n = 0
+    for (const proc of bundle.processes) {
+      for (const name of proc.compatible) {
+        const machine = bundle.printers.find((p) => p.name === name)?.settings
+        if (!machine) continue
+        const r = await run({}, { proc: proc.settings, machine, update: true })
+        assert.deepEqual(r.over, {}, `${proc.name} on ${name}`)
+        assert.deepEqual(r.notices, [], `${proc.name} on ${name}`)
+        n++
+      }
+    }
+    assert.ok(n > 20, `only ${n} combinations`)
+  },
+  async 'removing a filament clamps the support filaments (Sidebar::delete_filament -> update)'() {
+    const r = await run({}, { initial: { support_filament: '2', support_interface_filament: '2' }, update: true })
+    assert.equal(r.get('support_filament'), '0')
+    assert.equal(r.get('support_interface_filament'), '0')
+    const keep = await run({}, { initial: { support_filament: '2' }, filaments: [PLA, SUPPORT_PLA], used: ['PLA'], update: true })
+    assert.equal(keep.get('support_filament'), '2')
+  },
+  async 'engine config clamps filament references like full_fff_config'() {
+    const p = { support_filament: '3', support_interface_filament: '-1', wipe_tower_filament: '2', outer_wall_filament_id: '3', top_surface_filament_id: '2', sparse_infill_layers: '3' }
+    clampFilamentRefs(p, 2)
+    assert.deepEqual(p, { support_filament: '2', support_interface_filament: '0', wipe_tower_filament: '2', outer_wall_filament_id: '0', top_surface_filament_id: '2', sparse_infill_layers: '3' })
+  },
+  async 'printer: firmware retraction, yes sets retract before wipe to 100% on every variant'() {
+    const r = await runPrinter({ use_firmware_retraction: '1' }, { answers: [true] })
+    assert.equal(r.get('use_firmware_retraction'), '1')
+    assert.ok(r.all('wipe').every((v) => v === '0'))
+    assert.ok(r.all('retract_before_wipe').every((v) => v === '100%'))
+    assert.equal(r.all('wipe').length, printer.wipe.length)
+  },
+  async 'printer: firmware retraction, no turns it off again'() {
+    const r = await runPrinter({ use_firmware_retraction: '1' }, { answers: [false] })
+    assert.equal(r.get('use_firmware_retraction'), '0')
+    assert.deepEqual(r.all('wipe'), printer.wipe)
+  },
+  async 'printer: firmware retraction without wipe asks nothing'() {
+    const r = await runPrinter({ wipe: '0', use_firmware_retraction: '1' })
+    assert.equal(r.get('use_firmware_retraction'), '1')
+  },
+  async 'printer: single-extruder MM off clears purge in prime tower and manual filament change, and reruns the process rules'() {
+    const r = await runPrinter({ single_extruder_multi_material: '0' }, { initial: { purge_in_prime_tower: '1', manual_filament_change: '1' } })
+    assert.equal(r.get('purge_in_prime_tower'), '0')
+    assert.equal(r.get('manual_filament_change'), '0')
+    assert.equal(r.result.processUpdate, true)
+    assert.equal((await runPrinter({ printer_notes: 'x' })).result.processUpdate, false)
+  },
+  async 'printer: input shaper type follows the firmware flavour'() {
+    assert.equal((await runPrinter({ input_shaping_type: 'MZV', gcode_flavor: 'marlin2' })).get('input_shaping_type'), 'ZV')
+    assert.equal((await runPrinter({ gcode_flavor: 'klipper', input_shaping_type: 'EI' })).get('input_shaping_type'), 'EI')
+    assert.equal((await runPrinter({ gcode_flavor: 'klipper', input_shaping_type: 'DAA' })).get('input_shaping_type'), 'Default')
+  },
+  async 'printer: long retraction warns, reserved G-code tags warn'() {
+    assert.equal((await runPrinter({ long_retractions_when_cut: '1' })).notices.length, 1)
+    const g = await runPrinter({ machine_end_gcode: 'M400\n; FEATURE: Custom\n' })
+    assert.equal(g.notices.length, 1)
+    assert.match(g.notices[0], /Machine end G-code[\s\S]*; FEATURE: Custom/)
+    assert.equal((await runPrinter({ machine_end_gcode: printer.machine_end_gcode })).notices.length, 0)
+  },
+  async 'stock G-code of every preset has no reserved tags'() {
+    for (const list of [bundle.printers, bundle.filaments, bundle.processes]) {
+      for (const p of list) {
+        for (const [k, v] of Object.entries(p.settings)) {
+          for (const g of [v].flat()) assert.equal(gcodeWarning(k, g), null, `${p.name} ${k}`)
+        }
+      }
+    }
+  },
+  async 'filament: diameter and pellet flow coefficient follow each other'() {
+    const r = runFilament({ filament_diameter: '2' })
+    assert.equal(Number(r.get('pellet_flow_coefficient')).toFixed(6), (4 / (4 * Math.PI)).toFixed(6))
+    const k = runFilament({ pellet_flow_coefficient: String(4 / (1.75 * 1.75 * Math.PI)) })
+    assert.equal(k.get('filament_diameter'), '1.75')
+  },
+  async 'filament: long retraction and G-code warnings'() {
+    assert.equal(runFilament({ filament_long_retractions_when_cut: '1' }).notices.length, 1)
+    assert.equal(runFilament({ filament_end_gcode: '; WIPE_START\n; WIPE_END\n' }).notices.length, 1)
+  },
   async 'unrelated change on the stock preset does nothing'() {
     const r = await run({ outer_wall_speed: '150' })
     assert.deepEqual(r.over, { outer_wall_speed: '150' })

@@ -133,24 +133,79 @@ effect(() => {
   try { localStorage.setItem(MODE_KEY, String(m)) } catch { /* ignore */ }
 })
 
-export function setPrinter(name: string) {
+/** The printer overrides that are the user's edits (nozzle_type mirrors the installed nozzle). */
+export const printerEdits = (o: Selection['printerOverrides']) => Object.keys(o).filter((k) => k !== 'nozzle_type')
+
+/** What the user changed that a printer switch can carry over or drop: counts of overridden options. */
+export function unsavedChanges() {
+  const s = sel.value
+  return {
+    printer: printerEdits(s.printerOverrides).length,
+    process: Object.keys(s.processOverrides).length,
+    filament: s.filaments.reduce((n, f) => n + Object.keys(f.overrides ?? {}).length, 0),
+  }
+}
+
+/**
+ * Which overrides a switch to another printer keeps. Printer edits never move
+ * (Orca's printer tab offers no "Transfer"). Process and filament edits are
+ * transferred when true, dropped when false, and when unset kept only where
+ * the preset stays the same.
+ */
+export interface SwitchKeep { process?: boolean; filaments?: boolean }
+
+/**
+ * Selects printer preset `name`, keeping a compatible process and the same
+ * filaments where they still fit. Re-selecting the current printer (page load)
+ * keeps every override. Returns how many overridden options were dropped
+ * (with `apply` false, would be dropped, without switching).
+ */
+export function setPrinter(name: string, keep: SwitchKeep = {}, apply = true): { printer: number; process: number; filament: number } {
+  const dropped = { printer: 0, process: 0, filament: 0 }
   const b = bundle.value
-  if (!b) return
+  if (!b) return dropped
   const p = b.printers.find((x) => x.name === name)
-  if (!p) return
+  if (!p) return dropped
+  const s = sel.value
+  const same = name === s.printer
   const procs = compatibleProcesses(b, name)
-  const process = procs.some((x) => x.name === sel.value.process)
-    ? sel.value.process
+  const process = procs.some((x) => x.name === s.process)
+    ? s.process
     : (procs.find((x) => x.name === p.settings.default_print_profile)?.name ?? procs[0]?.name ?? '')
   const fils = compatibleFilaments(b, name)
-  const filaments = sel.value.filaments.map((f) => {
-    if (fils.some((x) => x.name === f.preset)) return f
-    // Same filament for the new nozzle/printer, e.g. "Bambu PLA Basic @BBL X1C 0.2 nozzle".
-    const stem = f.preset.replace(/ @.*$/, '')
-    const match = fils.find((x) => x.name.startsWith(stem + ' @')) ?? fils[0]
-    return { ...f, preset: match?.name ?? f.preset }
+  const filaments = s.filaments.map((f) => {
+    let preset = f.preset
+    if (!fils.some((x) => x.name === f.preset)) {
+      // Same filament for the new nozzle/printer, e.g. "Bambu PLA Basic @BBL X1C 0.2 nozzle".
+      const stem = f.preset.replace(/ @.*$/, '')
+      preset = (fils.find((x) => x.name.startsWith(stem + ' @')) ?? fils[0])?.name ?? f.preset
+    }
+    const keepIt = same || (keep.filaments ?? preset === f.preset)
+    if (keepIt || !f.overrides) return preset === f.preset ? f : { ...f, preset }
+    dropped.filament += Object.keys(f.overrides).length
+    const { overrides: _, ...rest } = f
+    return { ...rest, preset }
   })
-  updateSel({ printer: name, process, filaments, processOverrides: {} })
+  let processOverrides = s.processOverrides
+  if (!same && !(keep.process ?? process === s.process)) {
+    dropped.process = Object.keys(processOverrides).length
+    processOverrides = {}
+  }
+  let printerOverrides = s.printerOverrides
+  if (!same) {
+    dropped.printer = printerEdits(printerOverrides).length
+    printerOverrides = printerOverrides.nozzle_type ? { nozzle_type: printerOverrides.nozzle_type } : {}
+  }
+  if (!apply || (same && process === s.process && JSON.stringify(filaments) === JSON.stringify(s.filaments))) return dropped
+  updateSel({ printer: name, process, filaments, processOverrides, printerOverrides })
+  return dropped
+}
+
+/** "3 printer settings and 1 process setting", or '' if nothing. */
+export function describeChanges(c: { printer: number; process: number; filament: number }): string {
+  const part = (n: number, what: string) => (n ? `${n} ${what} setting${n === 1 ? '' : 's'}` : '')
+  const parts = [part(c.printer, 'printer'), part(c.process, 'process'), part(c.filament, 'filament')].filter(Boolean)
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] ?? ''
 }
 
 export async function initSettings() {

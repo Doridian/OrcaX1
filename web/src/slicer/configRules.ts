@@ -19,14 +19,14 @@
 //   - per-object and per-plate variants (OK-only spiral dialog for objects,
 //     apply_null_fff_config, the "is_plate_config" spiral exemption);
 //   - the "#if 0" prime tower vs. adaptive/independent support layer height block;
-//   - printer and filament tab checks (nozzle temperature ranges, chamber
-//     temperature, max volumetric speed, long retractions when cut, extruder
-//     count, per-extruder layer height limits): they edit other presets;
+//   - printer and filament tab checks: they edit other presets and live in
+//     filamentRules.ts and printerRules.ts;
 //   - SLA options.
 //
 // Orca's modal "Reset to X" OK dialogs become a correction plus a notice that
 // does not block; its Yes/No dialogs become questions.
 
+import { gcodeWarning } from './gcodeCheck'
 import type { Settings } from './profiles'
 import { MULTILINE_PATTERNS } from './toggles'
 
@@ -110,6 +110,19 @@ const fmt = (n: number) => String(Math.round(n * 1000) / 1000)
 export async function processChanged(key: string, prev: string, host: RuleHost, state: RuleState): Promise<void> {
   const c = new Cfg(host)
   await onValueChange(c, key, prev)
+  await update(c, state)
+}
+
+/**
+ * TabPrint::update() on its own, as Orca runs it when a preset is loaded
+ * (Tab::load_current_preset, also after a printer switch) and when filaments
+ * are added or removed (Sidebar::add_filament / delete_filament).
+ */
+export async function processUpdate(host: RuleHost, state: RuleState): Promise<void> {
+  await update(new Cfg(host), state)
+}
+
+async function update(c: Cfg, state: RuleState) {
   // update() runs again after every apply(); a handful of passes always settles.
   for (let i = 0; i < 5; i++) {
     const before = c.changes
@@ -124,6 +137,10 @@ async function onValueChange(c: Cfg, key: string, prev: string) {
   const h = c.h
   const value = c.str(key)
   const on = value === '1' || value === 'true'
+
+  // The option group's validate_custom_gcode_cb, before on_value_change.
+  const gcode = gcodeWarning(key, value)
+  if (gcode) h.notify(gcode)
 
   if (key === 'enable_prime_tower') {
     if (!on && c.str('timelapse_type') === '1') {
@@ -355,7 +372,8 @@ async function updatePrintFffConfig(c: Cfg, state: RuleState) {
   }
 
   // A support filament past the last slot falls back to Default (Orca uses
-  // the plater's value, which is this same config) (silent).
+  // the plater's value, which is this same config) (silent). Runs when the
+  // filament count changes too (processUpdate).
   for (const k of ['support_filament', 'support_interface_filament'])
     if (c.int(k) > h.filaments.length) c.set(k, 0)
 

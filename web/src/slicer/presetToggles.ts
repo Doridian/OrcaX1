@@ -2,9 +2,9 @@
 // values. Ports of TabFilament::toggle_options / update_filament_overrides_page
 // and TabPrinter::toggle_options from OrcaSlicer v2.4.2
 // (src/slic3r/GUI/Tab.cpp), for a Bambu Lab printer with one extruder.
-// toggle_line hides an option, toggle_option disables it. Orca's prompts that
-// also change values (e.g. firmware retraction forcing "retract before wipe"
-// to 100%) are not ported.
+// toggle_line hides an option, toggle_option disables it. What Orca does to
+// values (e.g. firmware retraction forcing "retract before wipe" to 100%) is
+// in printerRules.ts and filamentRules.ts.
 
 import type { Toggles } from './toggles'
 

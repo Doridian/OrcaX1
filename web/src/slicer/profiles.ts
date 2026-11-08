@@ -205,6 +205,22 @@ export interface EngineConfig {
   fragments: { format: 'orca.profile-json' | 'orca.native-json'; data: Settings | Record<string, unknown> }[]
 }
 
+/**
+ * PresetBundle::full_fff_config: process options that name a filament (1-based,
+ * 0 = default) never point past the last filament, whatever the overrides say.
+ */
+export function clampFilamentRefs(process: Settings, n: number) {
+  const fix = (k: string, f: (v: number) => number) => {
+    const v = process[k]
+    if (v === undefined || Array.isArray(v)) return
+    const i = Math.trunc(Number(v) || 0), to = f(i)
+    if (to !== i) process[k] = String(to)
+  }
+  for (const k of ['support_filament', 'support_interface_filament', 'wipe_tower_filament']) fix(k, (v) => Math.min(Math.max(v, 0), n))
+  for (const k of ['outer_wall_filament_id', 'inner_wall_filament_id', 'sparse_infill_filament_id',
+    'internal_solid_filament_id', 'top_surface_filament_id', 'bottom_surface_filament_id']) fix(k, (v) => (v < 0 || v > n ? 0 : v))
+}
+
 export function buildEngineConfig(b: ProfileBundle, sel: Selection): EngineConfig {
   const printer = b.printers.find((p) => p.name === sel.printer)
   const proc = b.processes.find((p) => p.name === sel.process)
@@ -220,6 +236,7 @@ export function buildEngineConfig(b: ProfileBundle, sel: Selection): EngineConfi
   const scalars = new Set(b.scalarKeys)
   const machine = scalarize(machineSettings({ ...printer, settings: { ...printer.settings, ...sel.printerOverrides } }, sel.flow), scalars, sel.flow, printer.settings.printer_extruder_variant)
   const process = scalarize({ ...processSettings(proc, sel.flow), ...sel.processOverrides }, scalars, sel.flow, proc.settings.print_extruder_variant)
+  clampFilamentRefs(process, n)
   const filament = mergeFilaments(
     fils.map((f) => scalarize(f.settings, scalars, sel.flow, f.preset.settings.filament_extruder_variant)), scalars)
 

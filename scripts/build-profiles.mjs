@@ -12,8 +12,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { processSettingsSchema } from './orca-config.mjs'
-import { materialTemperatures, presetSettingsSchemas } from './orca-tabs.mjs'
+import { materialTemperatures, settingsSchemas } from './orca-tabs.mjs'
 
 const ORCA_TAG = process.env.ORCA_TAG ?? 'v2.4.2'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -48,11 +47,8 @@ for (const m of printConfig.matchAll(/this->add(?:_nullable)?\("([A-Za-z0-9_]+)"
 const VECTOR_TYPES = new Set(['coFloats', 'coInts', 'coStrings', 'coPercents', 'coFloatsOrPercents', 'coPoints', 'coBools', 'coEnums', 'coPointsGroups', 'coIntsGroups'])
 const scalarKeys = Object.keys(optionTypes).filter((k) => !VECTOR_TYPES.has(optionTypes[k])).sort()
 
-const processSchema = processSettingsSchema(printConfig,
-  readFileSync(join(orcaSrc, 'src/slic3r/GUI/Tab.cpp'), 'utf8'),
-  readFileSync(join(orcaSrc, 'src/libslic3r/PrintConfigConstants.hpp'), 'utf8'))
-// Filament and printer settings tabs (see orca-tabs.mjs).
-const { filamentSchema, printerSchema } = presetSettingsSchemas(printConfig,
+// Process, filament and printer settings tabs (see orca-tabs.mjs).
+const { processSchema, filamentSchema, printerSchema } = settingsSchemas(printConfig,
   readFileSync(join(orcaSrc, 'src/slic3r/GUI/Tab.cpp'), 'utf8'),
   readFileSync(join(orcaSrc, 'src/libslic3r/PrintConfigConstants.hpp'), 'utf8'))
 const materialTemps = materialTemperatures(readFileSync(join(orcaSrc, 'src/libslic3r/MaterialType.cpp'), 'utf8'))
