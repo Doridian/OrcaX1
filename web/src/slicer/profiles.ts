@@ -233,6 +233,12 @@ export function buildEngineConfig(b: ProfileBundle, sel: Selection): EngineConfi
     filament_ids: fils.map((f) => f.preset.filament_id ?? ''),
     filament_colour: fils.map((f) => f.slot.color.toUpperCase()),
     filament_map: fils.map(() => '1'),
+    // Which filament each entry of the collapsed per-variant filament options
+    // belongs to. Without it the engine fills every filament's per-variant
+    // values (nozzle temperature, flow ratio, max volumetric speed,
+    // retraction, ...) from filament 1. Orca's PresetBundle::full_config sets
+    // it the same way.
+    filament_self_index: fils.map((_, i) => String(i + 1)),
     curr_bed_type: sel.bedType,
     remove_mixed_temp_restriction: sel.allowMixedTemps ? 1 : 0,
     // The engine's init defaults this to 0; Orca's own default (which BBL
