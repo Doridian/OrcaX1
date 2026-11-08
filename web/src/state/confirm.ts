@@ -7,6 +7,8 @@ export interface ConfirmRequest {
   body?: ComponentChildren
   /** Label of the confirming button (default "OK"). */
   confirm?: string
+  /** Label of the declining button (default "Cancel"). */
+  cancel?: string
   danger?: boolean
 }
 

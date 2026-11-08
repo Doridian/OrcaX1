@@ -2,14 +2,15 @@
 // A port of ConfigManipulation::toggle_print_fff_options from OrcaSlicer
 // v2.4.2 (src/slic3r/GUI/ConfigManipulation.cpp): toggle_line hides an
 // option, toggle_field disables it. The printer is always a Bambu Lab X1.
-// The side effects that function also has (forcing values) are left to the
-// engine, which applies the same rules when it validates the config.
+// The values that function also forces are in configRules.ts, which runs when
+// a value changes.
 
 import type { Settings } from './profiles'
 
 export interface Toggles { hidden: Set<string>; disabled: Set<string> }
 
-const MULTILINE_PATTERNS = new Set([
+/** Sparse infill patterns that support fill_multiline. */
+export const MULTILINE_PATTERNS = new Set([
   'gyroid', 'grid', 'rectilinear', 'tpmsd', 'tpmsfk', 'crosshatch', 'honeycomb', 'lateral-lattice', 'lateral-honeycomb',
   'concentric', 'cubic', 'stars', 'alignedrectilinear', 'lightning', '3dhoneycomb', 'adaptivecubic', 'supportcubic',
   'triangles', 'quartercubic', 'archimedeanchords', 'hilbertcurve', 'octagramspiral',

@@ -7,6 +7,7 @@ import {
 } from '../state/hardware'
 import { mqttConnected } from '../state/printer'
 import { confirmNozzleEdit, confirmTrayEdit } from './hardwareEdits'
+import { ProcessNotices } from './ProcessNotices'
 import {
   bundle, bundleError, currentPrinter, currentProcess, filamentList, processList, processScalar, processValue, sel, setProcessOverride,
   setProcessScalar, settingsMode, updateSel,
@@ -323,6 +324,7 @@ function ProcessSection() {
           {MODES.map(([l, m]) => <button class={mode === m ? 'active' : ''} onClick={() => { settingsMode.value = m }}>{l}</button>)}
         </div>
       </div>
+      <ProcessNotices />
       {!searching && (
         <div class="subtabs">
           {schema.pages.map((p) => <button class={tab === p.title ? 'active' : ''} onClick={() => setTab(p.title)}>{p.title}</button>)}

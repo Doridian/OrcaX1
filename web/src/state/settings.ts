@@ -80,8 +80,29 @@ export function processScalar(key: string): string {
   return isVectorOption(key) ? v.map((x) => x.replace(/^\n+/, '')).join('\n') : v[variantSlot(v)] ?? ''
 }
 
-/** Sets a scalar process option for the active variant (or a vector option from newline-separated text). */
+/** Sets a scalar process option for the active variant (or a vector option from newline-separated text), as the user. */
 export function setProcessScalar(key: string, value: string) {
+  userChange(key, () => writeProcessScalar(key, value))
+}
+
+/** Sets (or with null, resets) a process override, as the user. */
+export function setProcessOverride(key: string, value: string | string[] | null) {
+  userChange(key, () => writeProcessOverride(key, value))
+}
+
+/** Writes a value and lets Orca's rules (configRules.ts) react to the change. */
+function userChange(key: string, write: () => void) {
+  const prev = processScalar(key)
+  write()
+  if (processScalar(key) !== prev) processRulesHook?.(key, prev)
+}
+
+let processRulesHook: ((key: string, prev: string) => void) | null = null
+/** Set by state/processRules.ts. */
+export function onProcessChange(fn: (key: string, prev: string) => void) { processRulesHook = fn }
+
+/** setProcessScalar without running the rules. */
+export function writeProcessScalar(key: string, value: string) {
   const cur = sel.value.processOverrides[key] ?? processBase(key)
   let next: string | string[] = value
   if (isVectorOption(key)) next = value.split('\n')
@@ -89,10 +110,10 @@ export function setProcessScalar(key: string, value: string) {
     next = [...cur]
     next[variantSlot(cur)] = value
   }
-  setProcessOverride(key, next)
+  writeProcessOverride(key, next)
 }
 
-export function setProcessOverride(key: string, value: string | string[] | null) {
+function writeProcessOverride(key: string, value: string | string[] | null) {
   const o = { ...sel.value.processOverrides }
   const base = processBase(key)
   if (value === null || JSON.stringify(value) === JSON.stringify(base) || (base === undefined && value === '')) delete o[key]

@@ -321,3 +321,7 @@ input[type="password"] {
 .option-block > textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 11px; resize: vertical; }
 textarea.changed { border-color: var(--warn); }
 .row > .control > input[type="checkbox"] { flex: 0 0 auto; width: auto; margin: 0; }
+.pre-line { white-space: pre-line; }
+.process-notices { margin: 6px 0; display: grid; gap: 4px; }
+.process-notice { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); border-radius: 4px; padding: 4px 6px; }
+.process-notice span { flex: 1; }
