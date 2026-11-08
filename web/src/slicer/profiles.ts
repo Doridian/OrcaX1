@@ -1,3 +1,5 @@
+import type { ProcessSchema } from './schema'
+
 // Bambu Lab X1 system profiles (built by scripts/build-profiles.mjs) and the
 // logic that turns a printer, process and filament selection into engine
 // config fragments, as desktop Orca's PresetBundle::full_config does.
@@ -26,6 +28,8 @@ export interface ProfileBundle {
   /** Orca options that hold a single value (everything else is a vector). */
   scalarKeys: string[]
   source: string
+  /** Orca's process settings tab: pages, groups and option definitions. */
+  processSchema: ProcessSchema
   models: { name: string; default_bed_type: string | null; default_materials: string[]; model_id: string | null }[]
   printers: PrinterPreset[]
   processes: ProcessPreset[]
@@ -74,7 +78,7 @@ const PRINTER_OPTIONS_WITH_VARIANT_2 = new Set([
 export type NozzleFlow = 'Standard' | 'High Flow'
 const variantName = (flow: NozzleFlow) => `Direct Drive ${flow}`
 
-function variantIndex(list: string | string[] | undefined, flow: NozzleFlow): number {
+export function variantIndex(list: string | string[] | undefined, flow: NozzleFlow): number {
   if (!Array.isArray(list)) return 0
   const i = list.indexOf(variantName(flow))
   return i >= 0 ? i : 0

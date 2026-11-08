@@ -2,7 +2,8 @@
 // Headless check of the engine + profile bundle: slices a 20 mm cube with an
 // X1C profile and exports a printable .gcode.3mf.
 // Usage: node scripts/engine-smoke.mjs [out.gcode.3mf]
-import { readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,13 +33,16 @@ function cube(s) {
   return new Uint8Array(buf.buffer)
 }
 
+const mainScript = join(mkdtempSync(join(tmpdir(), 'orcax1-engine-')), 'slicer-mt.js')
+copyFileSync(join(ENGINE, 'slicer-mt.js'), mainScript)
 const jsText = readFileSync(join(ENGINE, 'slicer-mt.js'), 'utf8')
 const { default: artifact } = await import('data:text/javascript;charset=utf-8,' +
   encodeURIComponent(`${jsText}\nexport default OneSlicerEngine;`))
 const engine = await artifact.createEngine({
   runtime: {
     wasmBinary: readFileSync(join(ENGINE, 'slicer-mt.wasm')),
-    mainScriptUrlOrBlob: join(ENGINE, 'slicer-mt.js'),
+    // Pthread workers load this file; under web/ the package.json would make Node treat it as ESM.
+    mainScriptUrlOrBlob: mainScript,
     printErr: (m) => console.warn('[engine]', m),
   },
 })
@@ -65,9 +69,9 @@ console.log('profiles applied', Date.now() - t, 'ms')
 const stl = cube(20)
 await session.setObjects(stl, {
   schemaVersion: '0.7.0',
-  plates: [{ id: 'plate-0', index: 0 }],
+  plates: [{ id: 'plate-0', label: 'Plate 1', index: 0 }],
   meshes: [{ id: 'm0', format: 'stl', dataRange: { offset: 0, length: stl.length } }],
-  objects: [{ id: 'o0', meshId: 'm0', extruderId: 0, name: 'cube' }],
+  objects: [{ id: 'o0', meshId: 'm0', extruderId: 1, label: 'cube' }],
   instances: [{ id: 'i0', objectId: 'o0', plateId: 'plate-0', transform: { matrix: [1, 0, 0, 118, 0, 1, 0, 118, 0, 0, 1, 0, 0, 0, 0, 1] } }],
   modifierVolumes: [],
 })
