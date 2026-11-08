@@ -1,6 +1,7 @@
 // Editors for Orca settings tab options, shared by the process, filament and
 // printer settings. Each tab supplies an OptionAccess to read and write values.
 import { isFilamentPicker, visibleIn, type Mode, type OptionDef, type OptionLine, type OptionPage, type SettingsSchema } from '../slicer/schema'
+import type { ComponentChildren } from 'preact'
 import { sel } from '../state/settings'
 
 export interface OptionAccess {
@@ -141,18 +142,22 @@ export function shownGroups(schema: SettingsSchema, pages: OptionPage[], mode: M
 }
 
 /** Renders option groups as Orca lays them out: single options, and titled lines of several. */
-export function OptionGroups({ schema, groups, access, disabled, nullLocked }: {
+export function OptionGroups({ schema, groups, access, disabled, nullLocked, widget }: {
   schema: SettingsSchema
   groups: ShownGroup[]
   access: OptionAccess
   disabled: Set<string>
   nullLocked?: Set<string>
+  /** Renders a line Orca edits with a custom widget (OptionLine.widget); null falls back to plain fields. */
+  widget?: (line: OptionLine) => ComponentChildren
 }) {
   return <>
     {groups.map((g) => (
       <div>
         <div class="group-title">{g.title}</div>
         {g.lines.map((l) => {
+          const custom = l.widget && widget?.(l)
+          if (custom) return custom
           const multi = l.label && (l.keys.length > 1 || l.label !== schema.options[l.keys[0]]?.label)
           return (
             <div class={multi ? 'option-line' : undefined}>

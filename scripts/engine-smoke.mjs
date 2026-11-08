@@ -4,7 +4,7 @@
 // PrintConfig.cpp) for filament and printer settings the presets leave out are
 // applied too, and checked against the config block of the G-code.
 // Usage: node scripts/engine-smoke.mjs [out.gcode.3mf]
-import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
@@ -126,6 +126,7 @@ const exp = await session.export('project.3mf', { schemaVersion: '0.7.0', preser
 console.log('export', JSON.stringify(exp))
 const bytes = await session.getAsset(exp.asset.id)
 const out = process.argv[2] ?? join(ROOT, 'build/smoke.gcode.3mf')
+mkdirSync(dirname(out), { recursive: true })
 writeFileSync(out, bytes)
 console.log('wrote', out, bytes.length)
 process.exit(0)

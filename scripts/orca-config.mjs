@@ -1,8 +1,7 @@
-// Reads OrcaSlicer's option definitions (src/libslic3r/PrintConfig.cpp) and
-// the process settings layout of its settings tab (TabPrint::build in
-// src/slic3r/GUI/Tab.cpp), so the web UI shows the same pages, groups,
-// options, labels, tooltips, enums and units as the Orca version the engine
-// is built from.
+// Reads OrcaSlicer's option definitions (src/libslic3r/PrintConfig.cpp), so
+// the web UI shows the same options, labels, tooltips, enums and units as the
+// Orca version the engine is built from. The settings tab layouts (Tab.cpp)
+// are read by orca-tabs.mjs.
 
 /** Reads a C++ string literal sequence ("a" "b" ...) starting at s[i]; returns [text, end]. */
 export function readStrings(s, i) {
@@ -223,66 +222,4 @@ export function parseOptionDefs(src, constants = {}) {
     if (m[1]) named[m[1]] = d
   }
   return defs
-}
-
-/**
- * Pages of the process settings tab from TabPrint::build():
- * [{ title, groups: [{ title, lines: [{ label?, tooltip?, keys: [...] }] }] }].
- */
-export function parseProcessTab(src) {
-  const start = src.indexOf('void TabPrint::build()')
-  if (start < 0) throw new Error('TabPrint::build() not found in Tab.cpp')
-  const end = src.indexOf('\n}', start)
-  const lines = src.slice(start, end).split('\n')
-  const pages = []
-  let page = null, group = null, pending = null, line = null
-  for (let raw of lines) {
-    const t = raw.trim()
-    if (t.startsWith('//')) continue
-    raw = raw.replace(/\s\/\/(?![^"]*"\s*[,)]).*$/, '')
-    let m
-    if ((m = /add_options_page\(\s*L\("([^"]+)"\)/.exec(raw))) {
-      page = { title: m[1], groups: [] }
-      pages.push(page)
-      group = null
-    } else if ((m = /new_optgroup\(\s*L\("([^"]+)"\)/.exec(raw))) {
-      group = { title: m[1], lines: [] }
-      page.groups.push(group)
-    } else if ((m = /Line\s+line\s*=\s*\{|^\s*line\s*=\s*\{/.exec(raw))) {
-      const [label, i] = readStrings(raw, raw.indexOf('L(', m.index) + 2)
-      const rest = raw.slice(i)
-      const tip = rest.includes('L(') ? readStrings(rest, rest.indexOf('L(') + 2)[0] : null
-      line = { label, ...(tip ? { tooltip: tip } : {}), keys: [] }
-    } else if ((m = /line\.append_option\(\s*optgroup->get_option\("([a-z0-9_]+)"\)/.exec(raw))) {
-      line.keys.push(m[1])
-    } else if (/append_line\(\s*line\s*\)/.test(raw)) {
-      group.lines.push(line)
-      line = null
-    } else if ((m = /option\s*=\s*optgroup->get_option\("([a-z0-9_]+)"\)/.exec(raw))) {
-      pending = m[1]
-    } else if ((m = /append_single_option_line\(\s*"([a-z0-9_]+)"/.exec(raw))) {
-      group.lines.push({ keys: [m[1]] })
-    } else if (/append_single_option_line\(\s*option\b/.test(raw)) {
-      group.lines.push({ keys: [pending] })
-      pending = null
-    }
-  }
-  return pages
-}
-
-/** Layout plus the definitions of every option it shows. */
-export function processSettingsSchema(printConfigSrc, tabSrc, constantsSrc = '') {
-  const constants = Object.fromEntries([...constantsSrc.matchAll(/^#define\s+(\w+)\s+(\S+)/gm)].map((m) => [m[1], m[2]]))
-  const defs = parseOptionDefs(printConfigSrc, constants)
-  const pages = parseProcessTab(tabSrc)
-  const options = {}
-  const missing = []
-  for (const p of pages) for (const g of p.groups) for (const l of g.lines) for (const k of l.keys) {
-    const d = defs[k]
-    if (!d) { missing.push(k); continue }
-    const { category, enum_type, ...rest } = d
-    options[k] = rest
-  }
-  if (missing.length) throw new Error(`Tab.cpp options without a definition: ${missing.join(', ')}`)
-  return { pages, options }
 }

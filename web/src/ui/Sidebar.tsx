@@ -8,6 +8,8 @@ import {
 import { mqttConnected } from '../state/printer'
 import { confirmNozzleEdit, confirmTrayEdit } from './hardwareEdits'
 import { ProcessNotices } from './ProcessNotices'
+import { RawSettings } from './RawSettings'
+import type { RawAccess } from '../state/presetSettings'
 import { OptionGroups, shownGroups, type OptionAccess } from './OptionRow'
 import { openFilamentSettings, openPrinterSettings, PresetSettingsHost } from './PresetSettings'
 import {
@@ -61,7 +63,7 @@ function PrinterSection() {
         ? <div class="fixed-value" title="Reported by the printer">{detectedModel.value}</div>
         : (
           <select class="full" value={cur?.model} title="The printer has not announced its model yet"
-            onChange={(e) => setModel(e.currentTarget.value)}>
+            onChange={(e) => revertUnless(e.currentTarget, cur?.model ?? '', setModel(e.currentTarget.value))}>
             {models.map((m) => <option value={m}>{m}</option>)}
           </select>
         )}
@@ -185,35 +187,13 @@ function FilamentSection() {
 }
 
 /** Every key of the preset (and every override) as raw text. */
-function RawSettings() {
-  const [q, setQ] = useState('')
-  const settings = currentProcess.value?.settings ?? {}
-  const all = [...new Set([...Object.keys(settings), ...Object.keys(sel.value.processOverrides)])]
-  const keys = all.filter((k) => !q || k.includes(q.toLowerCase().replace(/\s+/g, '_'))).sort()
-  return (
-    <div>
-      <input type="text" placeholder="Filter keys…" value={q} onInput={(e) => setQ(e.currentTarget.value)} style={{ width: '100%', marginBottom: '6px' }} />
-      {keys.slice(0, 300).map((k) => {
-        const v = processValue(k)
-        const text = Array.isArray(v) ? v.join(';') : v ?? ''
-        const changed = k in sel.value.processOverrides
-        return (
-          <div class="row">
-            <label title={k}>{k}</label>
-            <div class="control">
-              <input type="text" class={changed ? 'changed' : ''} value={text}
-                onChange={(e) => {
-                  const t = e.currentTarget.value
-                  setProcessOverride(k, Array.isArray(v) ? t.split(';') : t)
-                }} />
-              {changed && <button class="reset" onClick={() => setProcessOverride(k, null)}>↺</button>}
-            </div>
-          </div>
-        )
-      })}
-      {keys.length > 300 && <div class="muted small-text">{keys.length - 300} more; refine the filter.</div>}
-    </div>
-  )
+/** The process keys for the Raw tab: stored, overridden, or defined by the tab (unset ones show Orca's default). */
+const processRaw: RawAccess = {
+  keys: () => [...new Set([...Object.keys(currentProcess.value?.settings ?? {}), ...Object.keys(sel.value.processOverrides),
+    ...Object.keys(bundle.value?.processSchema.options ?? {})])].sort(),
+  get: (k) => processValue(k) ?? bundle.value?.processSchema.options[k]?.default,
+  changed: (k) => k in sel.value.processOverrides,
+  set: setProcessOverride,
 }
 
 /** Process settings as the option editors read and write them. */
@@ -261,7 +241,7 @@ function ProcessSection() {
         </div>
       )}
       {!searching && tab === 'raw'
-        ? <RawSettings />
+        ? <RawSettings raw={processRaw} />
         : groups.length === 0
           ? <div class="muted small-text">{searching ? 'No matching settings' : 'Nothing to show'}{mode < 2 ? '; Expert shows more.' : '.'}</div>
           : <OptionGroups schema={schema} groups={groups} access={processAccess} disabled={disabled} />}
