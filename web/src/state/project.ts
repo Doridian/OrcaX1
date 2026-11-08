@@ -155,6 +155,33 @@ export function duplicateObjects(ids: string[]) {
   touch()
 }
 
+/**
+ * Replaces the whole project (open file / restore after reload). Starts a
+ * fresh undo history: the previous project is not an undo step.
+ */
+export function loadProject(list: ModelObject[], plates: number) {
+  for (const o of list) {
+    const n = Number(/^obj-(\d+)$/.exec(o.id)?.[1])
+    if (n >= nextId) nextId = n + 1
+  }
+  restoring = true
+  batch(() => {
+    objects.value = list
+    plateCount.value = Math.max(1, plates)
+    currentPlate.value = 0
+    selection.value = []
+  })
+  restoring = false
+  undoStack.length = 0
+  redoStack.length = 0
+  canUndo.value = false
+  canRedo.value = false
+  touch()
+}
+
+/** A fresh object id (for objects built outside addMeshes, e.g. a loaded project with duplicate ids). */
+export function newObjectId() { return `obj-${nextId++}` }
+
 export function clearProject() {
   objects.value = []
   selection.value = []
@@ -235,12 +262,24 @@ export function buildProject(list: ModelObject[], plates: number) {
     })),
     // Placed in the object's mesh coordinates; the engine applies the instance transform on top.
     modifierVolumes: list.flatMap((o) => (o.volumes ?? []).map((v) => ({
-      id: `${o.id}-${v.id}`, meshId: meshIds.get(v.positions)!, role: v.role, objectId: o.id, plateId: `plate-${o.plate}`,
+      id: volumeManifestId(o, v), meshId: meshIds.get(v.positions)!, role: v.role, objectId: o.id, plateId: `plate-${o.plate}`,
       transform: { matrix: rowMajor(volumeMatrix(v)) },
     }))),
   }
   return { blob, manifest }
 }
+
+/** Manifest id → display name of every object and volume (the engine names 3MF parts after manifest ids). */
+export function partNames(list: ModelObject[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const o of list) {
+    out[o.id] = o.name
+    for (const v of o.volumes ?? []) out[volumeManifestId(o, v)] = v.name
+  }
+  return out
+}
+
+export const volumeManifestId = (o: ModelObject, v: ModelVolume) => `${o.id}-${v.id}`
 
 // ---- Transforms (shared by the gizmos and the value-entry panels) ---------
 

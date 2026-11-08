@@ -20,6 +20,8 @@ import { Matrix4 } from 'three'
 import { page } from './App'
 import { ToolPanel, ToolStrip, toolForKey } from './Tools'
 import { PrintDialog } from './PrintDialog'
+import { isProject3mf } from '../model/project3mf'
+import { openProject3mf, saveProject3mf } from '../state/projectFile'
 import { AddVolume, VolumePanel, VolumeRows } from './ObjectVolumes'
 
 /** Live angle shown next to the cursor while dragging a rotation ring. */
@@ -30,6 +32,8 @@ export let sceneView: SceneView | null = null
 export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
   const host = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const projectInput = useRef<HTMLInputElement>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [drag, setDrag] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -138,8 +142,43 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
     try { await fn() } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
   }
 
-  const importFiles = (files: FileList | File[]) => run('Importing…', async () => {
-    for (const f of Array.from(files)) {
+  const openProject = async (f: File, bytes?: Uint8Array) => {
+    if (objects.value.length && !await ask({ title: 'Open project?', body: 'This replaces the current objects, plates and settings.', confirm: 'Open' })) return
+    await run('Opening project…', async () => {
+      setNotice(null)
+      const warnings = openProject3mf(bytes ?? new Uint8Array(await f.arrayBuffer()))
+      if (warnings.length) setNotice(warnings.join(' '))
+    })
+  }
+
+  const saveProject = () => run('Saving project…', async () => {
+    setNotice(null)
+    const { bytes, warnings } = await saveProject3mf()
+    if (warnings.length) setNotice(`Saved with engine warnings: ${warnings.join(' ')}`)
+    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'model/3mf' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${(objects.value[0]?.name ?? 'project').replace(/\.[^.]*$/, '') || 'project'}.3mf`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  })
+
+  const importFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files)
+    // A single Orca / Bambu project 3MF can be opened as a project instead of as geometry.
+    if (list.length === 1 && /\.3mf$/i.test(list[0].name)) {
+      const bytes = new Uint8Array(await list[0].arrayBuffer())
+      if (isProject3mf(bytes) && await ask({
+        title: 'Open as project?',
+        body: 'This 3MF is a slicer project. Open it as a project (objects, plates, support volumes and settings), or only import its geometry?',
+        confirm: 'Open project', cancel: 'Import geometry',
+      })) return openProject(list[0], bytes)
+    }
+    return importMeshes(list)
+  }
+
+  const importMeshes = (files: File[]) => run('Importing…', async () => {
+    for (const f of files) {
       const meshes = await importFile(f, async (kind, bytes) => (await getEngine()).convert(kind, bytes))
       addMeshes(meshes, bed.value)
     }
@@ -176,6 +215,8 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
             <>
               <div class="group">
                 <button onClick={() => fileInput.current!.click()} title="Import models">Import</button>
+                <button disabled={!!busy || slicing} onClick={() => projectInput.current!.click()} title="Open a project 3MF (OrcaSlicer / Bambu Studio / OrcaX1)">Open project</button>
+                <button disabled={!objects.value.length || !!busy || slicing} onClick={saveProject} title="Save the project (objects, plates, support volumes and settings) as an OrcaSlicer project 3MF">Save project</button>
                 <button disabled={!selection.value.length} onClick={() => duplicateObjects(selection.value)} title="Duplicate">Duplicate</button>
                 <button disabled={!selection.value.length} onClick={() => removeObjects(selection.value)} title="Delete (Del)">Delete</button>
                 <button disabled={!objects.value.length} onClick={async () => { if (await ask({ title: 'Remove all objects?', confirm: 'Remove', danger: true })) clearProject() }}>Clear</button>
@@ -259,6 +300,7 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
         <div class="float-panel slice-panel">
           {outOfBed.length > 0 && mode === 'prepare' && <div class="warning small-text">{outOfBed.length} object(s) outside the build volume</div>}
           {error && <div class="error small-text">{error}</div>}
+          {notice && <div class="warning small-text" onClick={() => setNotice(null)} title="Click to dismiss">{notice}</div>}
           {sliceError.value && <div class="error small-text">Slicing failed: {sliceError.value}</div>}
           {slicing && (
             <>
@@ -281,6 +323,8 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
       </div>
       <input ref={fileInput} type="file" multiple accept=".stl,.3mf,.obj,.step,.stp" style={{ display: 'none' }}
         onChange={(e) => { const f = e.currentTarget.files; if (f?.length) importFiles(f); e.currentTarget.value = '' }} />
+      <input ref={projectInput} type="file" accept=".3mf" style={{ display: 'none' }}
+        onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) openProject(f); e.currentTarget.value = '' }} />
       {printOpen && <PrintDialog onClose={() => setPrintOpen(false)} />}
     </div>
   )

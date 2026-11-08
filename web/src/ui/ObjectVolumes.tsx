@@ -3,11 +3,13 @@
 import { useRef, useState } from 'preact/hooks'
 import { Euler, Quaternion } from 'three'
 import { importFile } from '../model/mesh'
-import { meshExtent, ROLE_COLOR, ROLE_LABEL, type VolumeRole, type VolumeShape } from '../model/volumes'
+import { isSheared, meshExtent, volumeTRS, ROLE_COLOR, ROLE_LABEL, type VolumeRole, type VolumeShape } from '../model/volumes'
 import { getEngine } from '../slicer/engine'
 import type { ModelObject } from '../state/project'
 import { processScalar } from '../state/settings'
-import { activeVolume, addVolume, patchVolume, removeVolume, selectVolume, selectedVolume } from '../state/volumes'
+import {
+  activeVolume, addVolume, patchVolume, positionedVolume, removeVolume, rotatedVolume, scaledVolume, selectVolume, selectedVolume,
+} from '../state/volumes'
 import { NumField } from './Tools'
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`
@@ -90,9 +92,10 @@ export function VolumePanel() {
   const av = activeVolume.value
   if (!av) return null
   const { o, v } = av
-  const euler = new Euler().setFromQuaternion(new Quaternion(...v.rot), 'XYZ')
+  const trs = volumeTRS(v)
+  const euler = new Euler().setFromQuaternion(new Quaternion(...trs.rot), 'XYZ')
   const ext = meshExtent(v.positions)
-  const size = v.scale.map((s, a) => s * ext[a])
+  const size = trs.scale.map((s, a) => Math.abs(s) * ext[a])
   const set = (patch: Parameters<typeof patchVolume>[2]) => patchVolume(o.id, v.id, patch)
   const axes = ['X', 'Y', 'Z']
   return (
@@ -109,8 +112,8 @@ export function VolumePanel() {
       <div class="grid3">
         <span class="muted small-text">Pos. mm</span>
         {[0, 1, 2].map((a) => (
-          <label><b class={`ax${a}`}>{axes[a]}</b><NumField value={v.pos[a]} onCommit={(x) => {
-            const p = [...v.pos] as typeof v.pos; p[a] = x; set({ pos: p })
+          <label><b class={`ax${a}`}>{axes[a]}</b><NumField value={trs.pos[a]} onCommit={(x) => {
+            const p = [...trs.pos] as typeof trs.pos; p[a] = x; set(positionedVolume(v, p))
           }} /></label>
         ))}
       </div>
@@ -120,7 +123,7 @@ export function VolumePanel() {
           <label><b class={`ax${a}`}>{axes[a]}</b><NumField value={[euler.x, euler.y, euler.z][a] / RAD} onCommit={(x) => {
             const e = [euler.x, euler.y, euler.z]; e[a] = x * RAD
             const q = new Quaternion().setFromEuler(new Euler(e[0], e[1], e[2], 'XYZ'))
-            set({ rot: [q.x, q.y, q.z, q.w] })
+            set(rotatedVolume(v, [q.x, q.y, q.z, q.w]))
           }} /></label>
         ))}
       </div>
@@ -128,8 +131,8 @@ export function VolumePanel() {
         <span class="muted small-text">Size mm</span>
         {[0, 1, 2].map((a) => (
           <label><b class={`ax${a}`}>{axes[a]}</b><NumField value={size[a]} onCommit={(x) => {
-            if (!(x > 0) || !(ext[a] > 0)) return
-            const s = [...v.scale] as typeof v.scale; s[a] = x / ext[a]; set({ scale: s })
+            if (!(x > 0) || !(size[a] > 0)) return
+            const k: [number, number, number] = [1, 1, 1]; k[a] = x / size[a]; set(scaledVolume(v, k))
           }} /></label>
         ))}
       </div>
@@ -138,6 +141,7 @@ export function VolumePanel() {
         <button class="small" onClick={() => removeVolume(o.id, v.id)}>Delete</button>
       </div>
       <div class="muted small-text">In the object's coordinates (before its own scale and rotation). The move, rotate and scale gizmos act on this volume while it is selected.</div>
+      {isSheared(v) && <div class="muted small-text">Rotated inside a non-uniformly scaled object, so the volume is sheared in the object's coordinates: rotation and size above are its nearest unsheared equivalent; edits keep the shear.</div>}
     </>
   )
 }

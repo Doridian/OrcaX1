@@ -3,6 +3,7 @@
 // slice_info details the firmware reads (printer model id, per-filament tray
 // info, time/weight prediction).
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import { renameParts } from '../model/project3mf'
 import type { ProfileBundle, Selection } from './profiles'
 
 export interface PlateInfo {
@@ -20,7 +21,8 @@ function setMeta(block: string, key: string, value: string): string {
   return block.replace(/(<plate>\s*\n?)/, `$1    <metadata key="${key}" value="${xmlEscape(value)}"/>\n`)
 }
 
-export async function finalizeBambu3mf(bytes: Uint8Array, bundle: ProfileBundle, sel: Selection, plates: PlateInfo[]): Promise<Uint8Array> {
+/** `names`: part names in the engine export (manifest ids) → display names (see renameParts). */
+export async function finalizeBambu3mf(bytes: Uint8Array, bundle: ProfileBundle, sel: Selection, plates: PlateInfo[], names: Record<string, string> = {}): Promise<Uint8Array> {
   const files = unzipSync(bytes)
   const printer = bundle.printers.find((p) => p.name === sel.printer)
   const modelId = bundle.models.find((m) => m.name === printer?.model)?.model_id ?? ''
@@ -66,7 +68,7 @@ export async function finalizeBambu3mf(bytes: Uint8Array, bundle: ProfileBundle,
       if (!files[`Metadata/plate_${n}.png`] || /thumbnail_file/.test(block)) return block
       return block.replace(/(<metadata key="gcode_file"[^>]*\/>)/, `$1\n    <metadata key="thumbnail_file" value="Metadata/plate_${n}.png"/>`)
     })
-    files['Metadata/model_settings.config'] = strToU8(xml)
+    files['Metadata/model_settings.config'] = strToU8(renameParts(xml, names))
   }
 
   // G-code is incompressible-ish text; level 6 keeps zipping fast.

@@ -3,7 +3,7 @@
 import { computed, signal } from '@preact/signals'
 import { Matrix4, Quaternion, Vector3 } from 'three'
 import {
-  centerMesh, decomposeVolume, meshExtent, primitive, volumeMatrix, ROLE_LABEL, SHAPE_LABEL,
+  centerMesh, composeVolume, meshExtent, primitive, volumeMatrix, volumeTRS, ROLE_LABEL, SHAPE_LABEL,
   type ModelVolume, type VolumeRole, type VolumeShape,
 } from '../model/volumes'
 import { localBounds, objectMatrix, objects, selection, touch, type ModelObject } from './project'
@@ -50,15 +50,17 @@ export function addVolume(o: ModelObject, role: VolumeRole, shape: VolumeShape, 
     scale = s as [number, number, number]
   }
   const count = (o.volumes ?? []).filter((v) => v.role === role).length
+  // Ids only need to be unique within the object (a loaded project brings its own).
+  const used = new Set((o.volumes ?? []).map((x) => x.id))
+  let id = `vol-${nextVolume++}`
+  while (used.has(id)) id = `vol-${nextVolume++}`
   const v: ModelVolume = {
-    id: `vol-${nextVolume++}`,
+    id,
     name: mesh?.name ?? `${ROLE_LABEL[role]} ${count + 1} (${SHAPE_LABEL[shape].toLowerCase()})`,
     role,
     shape,
     positions,
-    pos: center,
-    rot: [0, 0, 0, 1],
-    scale,
+    matrix: composeVolume(center, [0, 0, 0, 1], scale),
   }
   replaceVolumes(o.id, (list) => [...list, v])
   selectVolume(o.id, v.id)
@@ -81,20 +83,49 @@ export function volumeWorldMatrix(o: ModelObject, v: ModelVolume): Matrix4 {
 
 /** Center, orientation and half extents of a volume in world space (for gizmos and selection). */
 export function volumeWorldFrame(o: ModelObject, v: ModelVolume) {
-  const p = new Vector3(), q = new Quaternion(), s = new Vector3()
-  volumeWorldMatrix(o, v).decompose(p, q, s)
+  // A sheared volume has no exact frame; its first axis and the plane of the
+  // first two are kept (volumeTRS), which is what the gizmo needs.
+  const { pos, rot, scale: s } = volumeTRS({ matrix: volumeWorldMatrix(o, v).toArray() })
   const ext = meshExtent(v.positions)
-  return { center: p, quat: q, half: new Vector3(Math.abs(s.x) * ext[0] / 2, Math.abs(s.y) * ext[1] / 2, Math.abs(s.z) * ext[2] / 2) }
+  return { center: new Vector3(...pos), quat: new Quaternion(...rot), half: new Vector3(Math.abs(s[0]) * ext[0] / 2, Math.abs(s[1]) * ext[1] / 2, Math.abs(s[2]) * ext[2] / 2) }
 }
 
-/** Applies a world-space transform `w` (about the world origin) to a volume, keeping its object fixed. */
+/**
+ * Applies a world-space transform `w` (about the world origin) to a volume,
+ * keeping its object fixed. The result is exact: with a non-uniformly scaled
+ * object, a world rotation is a shear in the object's frame, which the
+ * volume's matrix keeps.
+ */
 export function transformedVolume(o: ModelObject, v: ModelVolume, w: Matrix4) {
   const obj = objectMatrix(o)
   const local = obj.clone().invert().multiply(w).multiply(obj).multiply(volumeMatrix(v))
-  return decomposeVolume(local)
+  return { matrix: local.toArray() }
 }
 
-/** Scales a volume along its own axes (about its center). */
+/** Scales a volume along its own axes (about its center); each axis keeps at least 1e-3 of its mesh size. */
 export function scaledVolume(v: ModelVolume, k: [number, number, number]) {
-  return { scale: v.scale.map((s, a) => Math.max(1e-3, s * k[a])) as ModelVolume['scale'] }
+  const e = [...v.matrix]
+  for (let a = 0; a < 3; a++) {
+    const len = Math.hypot(e[a * 4], e[a * 4 + 1], e[a * 4 + 2])
+    const f = len * Math.abs(k[a]) < 1e-3 ? 1e-3 / Math.max(len, 1e-12) : k[a]
+    for (let r = 0; r < 3; r++) e[a * 4 + r] *= f
+  }
+  return { matrix: e }
+}
+
+/** Sets the volume's position (in object mesh coordinates). */
+export function positionedVolume(v: ModelVolume, pos: [number, number, number]) {
+  const e = [...v.matrix]
+  e[12] = pos[0]; e[13] = pos[1]; e[14] = pos[2]
+  return { matrix: e }
+}
+
+/** Turns the volume (about its center) so its displayed rotation becomes `rot`; any shear is kept. */
+export function rotatedVolume(v: ModelVolume, rot: [number, number, number, number]) {
+  const cur = volumeTRS(v)
+  const delta = new Matrix4().makeRotationFromQuaternion(new Quaternion(...rot).multiply(new Quaternion(...cur.rot).invert()))
+  const m = volumeMatrix(v)
+  const p = new Vector3().setFromMatrixPosition(m)
+  m.setPosition(0, 0, 0).premultiply(delta).setPosition(p)
+  return { matrix: m.toArray() }
 }

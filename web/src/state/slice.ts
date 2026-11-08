@@ -26,8 +26,10 @@ export const isStale = computed(() => slicedRev.value !== projectRev.value)
 let abort: AbortController | null = null
 /** Increments on every successful slice. */
 let sliceSerial = 0
+/** False once the engine session got a new project (e.g. for a project save), which drops its slice. */
+let sessionHoldsSlice = false
 
-async function configuredEngine() {
+export async function configuredEngine() {
   const b = bundle.value
   if (!b) throw new Error('profiles not loaded')
   if (!engineReady.value) {
@@ -37,6 +39,7 @@ async function configuredEngine() {
     engineReady.value = true
   }
   const engine = await getEngine()
+  sessionHoldsSlice = false
   const cfg = buildEngineConfig(b, sel.value)
   await engine.configure(cfg.init, cfg.fragments)
   const { blob, manifest } = buildProject(objects.value, plateCount.value)
@@ -75,6 +78,7 @@ export async function sliceAll() {
     for (const p of out) if (p.gcode) p.preview = await parseGcodeAsync(p.gcode)
     if (controller.signal.aborted) return
     plates.value = out
+    sessionHoldsSlice = true
     sliceSerial++
     slicedRev.value = rev
     sliceStatus.value = 'done'
@@ -101,6 +105,8 @@ export async function exportPrintable(onProgress?: (p: Progress) => void): Promi
   if (isStale.value || sliceStatus.value !== 'done') await sliceAll()
   if (sliceStatus.value !== 'done') throw new Error(sliceError.value ?? 'slicing failed')
   if (exportCache && exportCache.rev === sliceSerial) return exportCache.bytes
+  if (!sessionHoldsSlice) await sliceAll()
+  if (sliceStatus.value !== 'done') throw new Error(sliceError.value ?? 'slicing failed')
   const serial = sliceSerial
   const engine = await getEngine()
   const res = await engine.export('project.3mf', {

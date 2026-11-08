@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { EXTERNAL, trayName } from '../state/hardware'
 import { mqttConnected } from '../state/printer'
-import { currentPlate, objects } from '../state/project'
+import { currentPlate, objects, partNames } from '../state/project'
 import { bundle, sel } from '../state/settings'
 import { finalizeBambu3mf, type PlateInfo } from '../slicer/bambu3mf'
 import type { Progress } from '../slicer/engine'
@@ -23,7 +23,7 @@ async function buildPrintable(onProgress?: (p: Progress) => void): Promise<Uint8
     }
     infos.push(info)
   }
-  return finalizeBambu3mf(raw, bundle.value!, sel.value, infos)
+  return finalizeBambu3mf(raw, bundle.value!, sel.value, infos, partNames(objects.value))
 }
 
 export function PrintDialog({ onClose }: { onClose: () => void }) {
