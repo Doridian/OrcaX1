@@ -6,6 +6,7 @@ import {
   activeTool, groupBounds, localSize, patchObjects, rotated, scaled, selectedObjects, translated, updateObject,
   type ModelObject, type Tool,
 } from '../state/project'
+import { activeVolume } from '../state/volumes'
 
 const ICONS: Record<Exclude<Tool, null>, preact.JSX.Element> = {
   move: (
@@ -47,7 +48,7 @@ export function ToolStrip() {
 const r2 = (v: number, d = 2) => Number(v.toFixed(d))
 const RAD = Math.PI / 180
 
-function NumField({ value, onCommit, step = 1, unit }: { value: number; onCommit: (v: number) => void; step?: number; unit?: string }) {
+export function NumField({ value, onCommit, step = 1, unit }: { value: number; onCommit: (v: number) => void; step?: number; unit?: string }) {
   return (
     <span class="numfield">
       <input type="number" step={step} value={r2(value)}
@@ -65,6 +66,15 @@ export function ToolPanel() {
   if (!tool) return null
   const list = selectedObjects.value
   const label = TOOLS.find((t) => t.id === tool)!.label
+  const av = activeVolume.value
+  if (av && tool !== 'lay') {
+    return (
+      <div class="float-panel tool-panel">
+        <div class="tool-title">{label}: {av.v.name}</div>
+        <div class="muted small-text">The gizmo acts on the selected volume; its exact values are in the object list. Press Esc or click the object to go back to the object.</div>
+      </div>
+    )
+  }
   return (
     <div class="float-panel tool-panel">
       <div class="tool-title">{label}</div>

@@ -35,6 +35,8 @@ export class Gizmo {
   frame: GizmoFrame | null = null
   /** Multi-object selections only get uniform scaling. */
   uniformOnly = false
+  /** Adds a Z arrow to the move gizmo (volumes inside an object can move up and down). */
+  moveZ = false
   /** Radius of the rotation rings as last drawn (mm). */
   ringRadius = 0
   /**
@@ -65,7 +67,7 @@ export class Gizmo {
 
     if (mode === 'move') {
       // X and Y only: objects always rest on the bed.
-      for (const a of [0, 1] as const) {
+      for (const a of (this.moveZ ? [0, 1, 2] : [0, 1]) as (0 | 1 | 2)[]) {
         const len = frame.half.getComponent(a) + 60 * u
         const dir = axes[a]
         const q = new Quaternion().setFromUnitVectors(up, dir)
