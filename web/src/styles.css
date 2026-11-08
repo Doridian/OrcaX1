@@ -325,3 +325,15 @@ textarea.changed { border-color: var(--warn); }
 .process-notices { margin: 6px 0; display: grid; gap: 4px; }
 .process-notice { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); border-radius: 4px; padding: 4px 6px; }
 .process-notice span { flex: 1; }
+
+/* Object list: support enforcer / blocker volumes */
+.objects-panel li.volume { padding-left: 20px; font-size: 12px; }
+.objects-panel li .icon { padding: 0 5px; line-height: 1.2; opacity: 0.6; }
+.objects-panel li .icon:hover { opacity: 1; }
+.objects-panel .grid3 { display: grid; grid-template-columns: 48px repeat(3, 1fr); gap: 4px; align-items: center; margin: 4px 0; }
+.objects-panel .grid3 label { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.objects-panel .grid3 b { font-size: 11px; width: 10px; }
+.objects-panel .ax0 { color: #e5463b; } .objects-panel .ax1 { color: #3fb950; } .objects-panel .ax2 { color: #3d8bfd; }
+.add-volume { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 4px; }
+.add-volume .actions { flex-wrap: wrap; }
+.objects-panel .grid3 .numfield input { padding-right: 4px; }

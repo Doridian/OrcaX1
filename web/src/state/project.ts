@@ -1,6 +1,7 @@
 import { batch, computed, effect, signal } from '@preact/signals'
 import { Matrix4, Quaternion, Vector3 } from 'three'
 import { bounds, recenter, writeStl, type ImportedMesh } from '../model/mesh'
+import { volumeMatrix, type ModelVolume } from '../model/volumes'
 
 export interface ModelObject {
   id: string
@@ -13,6 +14,8 @@ export interface ModelObject {
   scale: [number, number, number]
   filament: number
   plate: number
+  /** Support enforcers / blockers attached to this object. */
+  volumes?: ModelVolume[]
   /** Bumped on each geometry or transform change, so views can cache. */
   rev: number
 }
@@ -194,9 +197,9 @@ export function worldBounds(o: ModelObject) {
 }
 
 const stlCache = new WeakMap<Float32Array, Uint8Array>()
-function stlOf(o: ModelObject) {
-  let s = stlCache.get(o.positions)
-  if (!s) { s = writeStl(o.positions); stlCache.set(o.positions, s) }
+function stlOf(positions: Float32Array) {
+  let s = stlCache.get(positions)
+  if (!s) { s = writeStl(positions); stlCache.set(positions, s) }
   return s
 }
 
@@ -206,14 +209,18 @@ export function buildProject(list: ModelObject[], plates: number) {
   const chunks: Uint8Array[] = []
   const meshes: any[] = []
   let offset = 0
-  for (const o of list) {
-    if (meshIds.has(o.positions)) continue
-    const stl = stlOf(o)
+  const addMesh = (positions: Float32Array) => {
+    if (meshIds.has(positions)) return
+    const stl = stlOf(positions)
     const id = `mesh-${meshes.length}`
-    meshIds.set(o.positions, id)
+    meshIds.set(positions, id)
     meshes.push({ id, format: 'stl', dataRange: { offset, length: stl.length } })
     chunks.push(stl)
     offset += stl.length
+  }
+  for (const o of list) {
+    addMesh(o.positions)
+    for (const v of o.volumes ?? []) addMesh(v.positions)
   }
   const blob = new Uint8Array(offset)
   let o2 = 0
@@ -226,7 +233,11 @@ export function buildProject(list: ModelObject[], plates: number) {
     instances: list.map((o) => ({
       id: `${o.id}-i`, objectId: o.id, plateId: `plate-${o.plate}`, transform: { matrix: rowMajor(objectMatrix(o)) },
     })),
-    modifierVolumes: [],
+    // Placed in the object's mesh coordinates; the engine applies the instance transform on top.
+    modifierVolumes: list.flatMap((o) => (o.volumes ?? []).map((v) => ({
+      id: `${o.id}-${v.id}`, meshId: meshIds.get(v.positions)!, role: v.role, objectId: o.id, plateId: `plate-${o.plate}`,
+      transform: { matrix: rowMajor(volumeMatrix(v)) },
+    }))),
   }
   return { blob, manifest }
 }

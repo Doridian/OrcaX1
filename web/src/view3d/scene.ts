@@ -11,10 +11,12 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { FEATURES, type GcodePreview } from '../gcode/parse'
 import { groupBounds, localBounds, objectMatrix, worldBounds, type ModelObject, type Tool } from '../state/project'
+import { ROLE_COLOR, type ModelVolume } from '../model/volumes'
+import { volumeWorldFrame, volumeWorldMatrix } from '../state/volumes'
 import { Gizmo, SNAP_FINE_OUT, SNAP_FREE_OUT, type HandleId } from './gizmo'
 
 export type GizmoEvent =
-  | { kind: 'move'; dx: number; dy: number }
+  | { kind: 'move'; dx: number; dy: number; dz: number }
   | { kind: 'rotate'; q: Quaternion; center: number[]; degrees: number; snap: 0 | 5 | 15; clientX: number; clientY: number }
   | { kind: 'scale'; k: [number, number, number]; center: number[] }
 
@@ -36,6 +38,10 @@ export class SceneView {
   private bedGroup = new Group()
   private modelGroup = new Group()
   private previewGroup = new Group()
+  /** Support enforcer / blocker volumes, drawn see-through over their objects. */
+  private volumeGroup = new Group()
+  private volumeMeshes = new Map<string, { mesh: Mesh; positions: Float32Array; edges: LineSegments | null }>()
+  private volumeSel: { o: ModelObject; v: ModelVolume } | null = null
   private meshes = new Map<string, { mesh: Mesh; obj: ModelObject | null; positions: Float32Array }>()
   private selectionBox: LineSegments | null = null
   private boundsCache = new WeakMap<ModelObject, ReturnType<typeof worldBounds>>()
@@ -54,6 +60,8 @@ export class SceneView {
   private layKey = ''
 
   onSelect: (id: string | null, additive: boolean) => void = () => {}
+  /** Click on a volume of a selected object. */
+  onSelectVolume: (obj: string, vol: string) => void = () => {}
   onMove: (id: string, x: number, y: number, final: boolean) => void = () => {}
   /** A gizmo drag is starting: the listener should snapshot the selection. */
   onGizmoStart: () => void = () => {}
@@ -77,6 +85,7 @@ export class SceneView {
     const sun = new DirectionalLight(0xffffff, 1.6)
     sun.position.set(-150, -250, 400)
     this.scene.add(sun)
+    this.modelGroup.add(this.volumeGroup)
     this.scene.add(this.bedGroup, this.modelGroup, this.previewGroup, this.gizmo.group)
 
     this.observer = new ResizeObserver(() => this.resize())
@@ -210,6 +219,75 @@ export class SceneView {
     this.dirty = true
   }
 
+  /**
+   * Draws the volumes of the given objects (call after setObjects). Volumes of
+   * selected objects are more opaque; `active` is the volume being edited
+   * (outlined, and the gizmos act on it instead of the object).
+   */
+  setVolumes(list: ModelObject[], selected: string[], active: { obj: string; vol: string } | null) {
+    const keep = new Set<string>()
+    let activeEntry: { o: ModelObject; v: ModelVolume } | null = null
+    for (const o of list) {
+      const isSel = selected.includes(o.id)
+      // Like Orca: a selected object with volumes turns see-through so they show.
+      if (isSel && o.volumes?.length) {
+        const mat = this.meshes.get(o.id)?.mesh.material as MeshStandardMaterial | undefined
+        if (mat) { mat.transparent = true; mat.opacity = 0.35; mat.depthWrite = false }
+      } else {
+        // setObjects (called first) has already reset color and opacity.
+        const mat = this.meshes.get(o.id)?.mesh.material as MeshStandardMaterial | undefined
+        if (mat) mat.depthWrite = true
+      }
+      for (const v of o.volumes ?? []) {
+        const key = `${o.id}/${v.id}`
+        keep.add(key)
+        let entry = this.volumeMeshes.get(key)
+        if (!entry || entry.positions !== v.positions) {
+          if (entry) this.disposeVolume(entry)
+          const g = new BufferGeometry()
+          g.setAttribute('position', new BufferAttribute(v.positions, 3))
+          g.computeVertexNormals()
+          const mesh = new Mesh(g, new MeshStandardMaterial({ transparent: true, depthWrite: false, roughness: 0.6 }))
+          mesh.matrixAutoUpdate = false
+          mesh.renderOrder = 2
+          mesh.userData.volume = { obj: o.id, vol: v.id }
+          this.volumeGroup.add(mesh)
+          entry = { mesh, positions: v.positions, edges: null }
+          this.volumeMeshes.set(key, entry)
+        }
+        entry.mesh.matrix.copy(volumeWorldMatrix(o, v))
+        entry.mesh.matrixWorldNeedsUpdate = true
+        const isActive = active?.obj === o.id && active.vol === v.id
+        if (isActive) activeEntry = { o, v }
+        const mat = entry.mesh.material as MeshStandardMaterial
+        mat.color.set(ROLE_COLOR[v.role])
+        mat.emissive.set(ROLE_COLOR[v.role])
+        mat.emissiveIntensity = isActive ? 0.5 : 0.25
+        mat.opacity = isActive ? 0.6 : isSel ? 0.45 : 0.3
+        if (isActive && !entry.edges) {
+          entry.edges = new LineSegments(new EdgesGeometry(entry.mesh.geometry, 30), new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }))
+          entry.mesh.add(entry.edges)
+        } else if (!isActive && entry.edges) {
+          entry.mesh.remove(entry.edges)
+          entry.edges.geometry.dispose()
+          entry.edges = null
+        }
+      }
+    }
+    for (const [key, entry] of this.volumeMeshes) {
+      if (!keep.has(key)) { this.disposeVolume(entry); this.volumeMeshes.delete(key) }
+    }
+    this.volumeSel = activeEntry
+    this.refreshGizmo()
+    this.dirty = true
+  }
+
+  private disposeVolume(entry: { mesh: Mesh; edges: LineSegments | null }) {
+    this.volumeGroup.remove(entry.mesh)
+    entry.mesh.geometry.dispose()
+    entry.edges?.geometry.dispose()
+  }
+
   /** Corner brackets around each selected object's bounding box, like Orca. */
   private updateSelectionBox(list: ModelObject[]) {
     if (this.selectionBox) {
@@ -302,6 +380,15 @@ export class SceneView {
     return { id: hits[0]?.object.userData.id ?? null, point: hitBed ? bedPoint : null }
   }
 
+  /** A volume of a selected object under the cursor (volumes are often inside their object, so they win). */
+  private pickVolume(ev: PointerEvent, selected: Set<string>): { obj: string; vol: string } | null {
+    if (!this.modelGroup.visible) return null
+    this.setRay(ev)
+    const candidates = this.volumeGroup.children.filter((m) => selected.has(m.userData.volume?.obj))
+    const hit = this.raycaster.intersectObjects(candidates, false)[0]
+    return hit ? hit.object.userData.volume : null
+  }
+
   setTool(tool: Tool) {
     this.tool = tool
     this.renderer.domElement.style.cursor = tool === 'lay' ? 'crosshair' : ''
@@ -324,6 +411,29 @@ export class SceneView {
       return
     }
     let center: Vector3, quat = new Quaternion(), half: Vector3
+    const vs = this.volumeSel
+    if (vs) {
+      // Editing a volume: world axes for move/rotate, its own axes for scaling.
+      const f = volumeWorldFrame(vs.o, vs.v)
+      center = f.center
+      half = f.half
+      if (t === 'scale') quat = f.quat
+      else {
+        const corner = new Vector3()
+        const box = new Vector3()
+        for (let c = 0; c < 8; c++) {
+          corner.set(c & 1 ? half.x : -half.x, c & 2 ? half.y : -half.y, c & 4 ? half.z : -half.z).applyQuaternion(f.quat)
+          box.max(new Vector3(Math.abs(corner.x), Math.abs(corner.y), Math.abs(corner.z)))
+        }
+        half = box
+      }
+      this.gizmo.uniformOnly = false
+      this.gizmo.moveZ = true
+      this.gizmo.update(t, { center, quat, half }, this.pixelSize(center))
+      this.dirty = true
+      return
+    }
+    this.gizmo.moveZ = false
     if (t === 'scale' && list.length === 1) {
       // The object's own frame, so per-axis handles match its scale vector.
       const o = list[0]
@@ -459,6 +569,8 @@ export class SceneView {
         if (h) { this.onLay(h.id, h.n); this.clearLay() }
         return
       }
+      const vol = this.pickVolume(ev, new Set(this.selectedList.map((o) => o.id)))
+      if (vol) { this.onSelectVolume(vol.obj, vol.vol); return }
       const { id, point } = this.pick(ev)
       if (id && point) {
         const mesh = this.meshes.get(id)?.mesh
@@ -478,7 +590,7 @@ export class SceneView {
         let e: GizmoEvent | null = null
         if (g.handle[0] === 'm') {
           const s = this.lineParam(g.center, g.axis)
-          if (s != null) { const d = s - g.s0; e = { kind: 'move', dx: g.axis.x * d, dy: g.axis.y * d } }
+          if (s != null) { const d = s - g.s0; e = { kind: 'move', dx: g.axis.x * d, dy: g.axis.y * d, dz: g.axis.z * d } }
         } else if (g.handle[0] === 'r') {
           const p = this.planeHit(g.axis, g.center)
           if (p && g.v0) {

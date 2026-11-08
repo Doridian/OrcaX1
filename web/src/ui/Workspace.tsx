@@ -15,9 +15,12 @@ import {
   arrange, autoOrient, cancelSlice, isStale, plates, sliceAll, sliceError, sliceProgress, sliceStatus,
 } from '../state/slice'
 import { SceneView, type GizmoEvent } from '../view3d/scene'
+import { activeVolume, patchVolume, removeVolume, scaledVolume, selectVolume, selectedVolume, transformedVolume } from '../state/volumes'
+import { Matrix4 } from 'three'
 import { page } from './App'
 import { ToolPanel, ToolStrip, toolForKey } from './Tools'
 import { PrintDialog } from './PrintDialog'
+import { AddVolume, VolumePanel, VolumeRows } from './ObjectVolumes'
 
 /** Live angle shown next to the cursor while dragging a rotation ring. */
 const rotateReadout = signal<Extract<GizmoEvent, { kind: 'rotate' }> | null>(null)
@@ -40,6 +43,7 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
     sceneView = v
     if (import.meta.env.DEV) (window as any).__sceneView = v
     v.onSelect = (id, additive) => {
+      selectedVolume.value = null
       if (!id) { selection.value = []; return }
       selection.value = additive
         ? (selection.value.includes(id) ? selection.value.filter((x) => x !== id) : [...selection.value, id])
@@ -56,9 +60,24 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
       objects.value = objects.value.map((p) => (ids.includes(p.id) ? { ...p, x: p.x + dx, y: p.y + dy, rev: p.rev + 1 } : p))
       if (final) touch()
     }
+    v.onSelectVolume = (obj, vol) => selectVolume(obj, vol)
     let gizmoBase: ModelObject[] = []
-    v.onGizmoStart = () => { gizmoBase = selectedObjects.value; beginGesture() }
+    let volumeBase: NonNullable<typeof activeVolume.value> | null = null
+    v.onGizmoStart = () => { gizmoBase = selectedObjects.value; volumeBase = activeVolume.value; beginGesture() }
     v.onGizmo = (e, final) => {
+      if (volumeBase) {
+        // The gizmo is on a volume: move/rotate in world space, scale along its own axes.
+        const { o, v: vol } = volumeBase
+        const patch = e.kind === 'move' ? transformedVolume(o, vol, new Matrix4().makeTranslation(e.dx, e.dy, e.dz))
+          : e.kind === 'rotate' ? transformedVolume(o, vol, new Matrix4().makeTranslation(e.center[0], e.center[1], e.center[2])
+            .multiply(new Matrix4().makeRotationFromQuaternion(e.q))
+            .multiply(new Matrix4().makeTranslation(-e.center[0], -e.center[1], -e.center[2])))
+            : scaledVolume(vol, e.k)
+        if (final) endGesture()
+        patchVolume(o.id, vol.id, patch, final)
+        rotateReadout.value = e.kind === 'rotate' && !final ? e : null
+        return
+      }
       const patches = e.kind === 'move' ? translated(gizmoBase, e.dx, e.dy)
         : e.kind === 'rotate' ? rotated(gizmoBase, e.q, e.center)
           : scaled(gizmoBase, e.k, e.center)
@@ -84,7 +103,8 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
   useEffect(() => { sceneView?.setTool(activeTool.value) }, [activeTool.value])
   useEffect(() => {
     sceneView?.setObjects(plateObjects.value, selection.value, colors)
-  }, [plateObjects.value, selection.value, colors.join()])
+    sceneView?.setVolumes(plateObjects.value, selection.value, activeVolume.value ? selectedVolume.value : null)
+  }, [plateObjects.value, selection.value, activeVolume.value, colors.join()])
   useEffect(() => {
     if (!preview) { sceneView?.setPreview(null, null as any); return }
     sceneView?.setPreview(preview, { colorBy, hidden, toolColors: colors, minLayer: layers[0], maxLayer: Math.min(layers[1], preview.layerCount - 1) })
@@ -99,9 +119,11 @@ export function Workspace({ mode }: { mode: 'prepare' | 'preview' }) {
       const mod = e.ctrlKey || e.metaKey
       if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return }
       if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selection.value.length) removeObjects(selection.value)
+      const av = activeVolume.value
+      if ((e.key === 'Delete' || e.key === 'Backspace') && av) removeVolume(av.o.id, av.v.id)
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.value.length) removeObjects(selection.value)
       else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) { selection.value = plateObjects.value.map((o) => o.id); e.preventDefault() }
-      else if (e.key === 'Escape') { if (activeTool.value) activeTool.value = null; else selection.value = [] }
+      else if (e.key === 'Escape') { if (activeTool.value) activeTool.value = null; else if (av) selectedVolume.value = null; else selection.value = [] }
       else if (!mod && !e.altKey && toolForKey[e.key.toLowerCase()] && page.value === 'prepare') {
         const t = toolForKey[e.key.toLowerCase()]
         activeTool.value = activeTool.value === t ? null : t
@@ -295,15 +317,20 @@ function ObjectsPanel() {
     <div class="float-panel objects-panel">
       <ul>
         {list.map((ob) => (
-          <li class={selection.value.includes(ob.id) ? 'sel' : ''} onClick={(e) => {
-            selection.value = e.shiftKey || e.ctrlKey ? [...selection.value, ob.id] : [ob.id]
-          }}>
-            <span class="swatch" style={{ background: fils[ob.filament]?.color ?? '#888', width: '12px', height: '12px' }} />
-            <span class="name" title={ob.name}>{ob.name}</span>
-          </li>
+          <>
+            <li class={selection.value.includes(ob.id) && !activeVolume.value ? 'sel' : ''} onClick={(e) => {
+              selectedVolume.value = null
+              selection.value = e.shiftKey || e.ctrlKey ? [...selection.value, ob.id] : [ob.id]
+            }}>
+              <span class="swatch" style={{ background: fils[ob.filament]?.color ?? '#888', width: '12px', height: '12px' }} />
+              <span class="name" title={ob.name}>{ob.name}</span>
+            </li>
+            <VolumeRows o={ob} />
+          </>
         ))}
       </ul>
-      {selObjs.length > 0 && (
+      {activeVolume.value && <VolumePanel />}
+      {selObjs.length > 0 && !activeVolume.value && (
         <>
           <div class="row">
             <label>Filament</label>
@@ -326,6 +353,7 @@ function ObjectsPanel() {
           <div class="actions">
             <button class="small" onClick={() => patchObjects(new Map(selObjs.map((ob) => [ob.id, { rot: [0, 0, 0, 1] as ModelObject['rot'], scale: [1, 1, 1] as ModelObject['scale'] }])))}>Reset transform</button>
           </div>
+          {selObjs.length === 1 && <AddVolume o={selObjs[0]} />}
         </>
       )}
     </div>
