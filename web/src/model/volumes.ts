@@ -18,10 +18,14 @@ export interface ModelVolume {
   shape: VolumeShape
   /** Triangle soup centered on its bounding box (primitives: unit size, -0.5..0.5). */
   positions: Float32Array
-  /** Placement in the object's mesh coordinates. */
-  pos: [number, number, number]
-  rot: [number, number, number, number]
-  scale: [number, number, number]
+  /**
+   * Placement in the object's mesh coordinates: a full affine 4x4 matrix
+   * (three.js column-major `elements`). A rotation applied in world space to a
+   * volume of a non-uniformly scaled object becomes a shear in object space,
+   * which a position/rotation/scale triple cannot hold, so the matrix is kept
+   * as is and only decomposed for display.
+   */
+  matrix: number[]
 }
 
 export const ROLE_LABEL: Record<VolumeRole, string> = {
@@ -110,18 +114,35 @@ export function meshExtent(positions: Float32Array): [number, number, number] {
 }
 
 /** Volume placement relative to its object's mesh coordinates. */
-export function volumeMatrix(v: ModelVolume): Matrix4 {
-  return new Matrix4().compose(new Vector3(...v.pos), new Quaternion(...v.rot), new Vector3(...v.scale))
+export function volumeMatrix(v: Pick<ModelVolume, 'matrix'>): Matrix4 {
+  return new Matrix4().fromArray(v.matrix)
 }
 
-/** Splits a local matrix back into a volume's pos/rot/scale. */
-export function decomposeVolume(m: Matrix4): Pick<ModelVolume, 'pos' | 'rot' | 'scale'> {
-  const p = new Vector3(), q = new Quaternion(), s = new Vector3()
-  m.decompose(p, q, s)
-  q.normalize()
-  return {
-    pos: [p.x, p.y, p.z],
-    rot: [q.x, q.y, q.z, q.w],
-    scale: [Math.max(1e-3, s.x), Math.max(1e-3, s.y), Math.max(1e-3, s.z)],
-  }
+/** Matrix of a position, rotation and per-axis scale (in object mesh coordinates). */
+export function composeVolume(pos: [number, number, number], rot: [number, number, number, number], scale: [number, number, number]): number[] {
+  return new Matrix4().compose(new Vector3(...pos), new Quaternion(...rot), new Vector3(...scale)).toArray()
+}
+
+/**
+ * Position, rotation and per-axis scale of a volume, for display. Exact when
+ * the matrix has no shear; with shear, `scale` is the length of each axis and
+ * `rot` the closest rotation (Gram-Schmidt of the axes).
+ */
+export function volumeTRS(v: Pick<ModelVolume, 'matrix'>) {
+  const e = v.matrix
+  const x = new Vector3(e[0], e[1], e[2]), y = new Vector3(e[4], e[5], e[6]), z = new Vector3(e[8], e[9], e[10])
+  const scale: [number, number, number] = [x.length(), y.length(), z.length()]
+  const ux = x.clone().normalize()
+  const uy = y.clone().sub(ux.clone().multiplyScalar(y.dot(ux))).normalize()
+  const uz = new Vector3().crossVectors(ux, uy)
+  if (uz.dot(z) < 0) scale[2] = -scale[2]
+  const q = new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(ux, uy, uz))
+  return { pos: [e[12], e[13], e[14]] as [number, number, number], rot: [q.x, q.y, q.z, q.w] as [number, number, number, number], scale }
+}
+
+/** True when the volume's axes are not perpendicular (a sheared placement). */
+export function isSheared(v: Pick<ModelVolume, 'matrix'>): boolean {
+  const e = v.matrix
+  const ax = [0, 4, 8].map((i) => new Vector3(e[i], e[i + 1], e[i + 2]).normalize())
+  return Math.abs(ax[0].dot(ax[1])) > 1e-6 || Math.abs(ax[0].dot(ax[2])) > 1e-6 || Math.abs(ax[1].dot(ax[2])) > 1e-6
 }
