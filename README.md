@@ -4,7 +4,7 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
 [X1Plus](https://github.com/X1Plus/X1Plus).
 
 * **Slicing runs entirely in your browser.** The engine is OrcaSlicer 2.4.2
-  compiled to WebAssembly ([OrcaWeb](https://github.com/Hiosdra/OrcaWeb)),
+  compiled to WebAssembly ([OrcaWasm](https://github.com/Hiosdra/OrcaWasm)),
   with OrcaSlicer's own Bambu Lab system profiles for the X1 series.
 * **The printer runs only `orcax1d`**, a small static Rust binary. It serves
   the page and bridges the browser to the printer's local services: MQTT
@@ -30,8 +30,11 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
   hold Shift), per-axis and uniform scale handles, lay on face, and
   numeric entry for position, move-by, rotation, rotate-by, scale % and size.
 * Printer / process / filament presets from OrcaSlicer's BBL profiles
-  (X1, X1C, X1E, all nozzle sizes), curated process settings plus a raw
-  editor for every key, persisted in the browser.
+  (X1, X1C, X1E, all nozzle sizes). Every process setting of Orca's settings
+  tab, with Orca's pages, groups, labels, tooltips, Simple / Advanced / Expert
+  modes and rules for hiding or greying out options that don't apply,
+  generated at build time from the OrcaSlicer sources the engine is built from;
+  plus search and a raw editor for every key. Changes persist in the browser.
 * The slicer mirrors the printer: the filament list is the AMS trays and
   external spool (one slot per tray, matched by Bambu filament id), and the
   printer model (from its discovery broadcast) and nozzle size and type are
@@ -131,7 +134,7 @@ docs/API.md daemon HTTP/WebSocket contract
 ## License
 
 OrcaX1 is licensed under the [GNU Affero General Public License v3.0](LICENSE)
-(`AGPL-3.0-only`), the same license as OrcaSlicer, whose engine (via OrcaWeb)
+(`AGPL-3.0-only`), the same license as OrcaSlicer, whose engine (via OrcaWasm)
 and profiles it ships. Because the daemon serves the app over a network, the
 AGPL requires that anyone you let use a modified version be able to get its
 source.

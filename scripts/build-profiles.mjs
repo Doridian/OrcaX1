@@ -12,10 +12,14 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { processSettingsSchema } from './orca-config.mjs'
 
 const ORCA_TAG = process.env.ORCA_TAG ?? 'v2.4.2'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PRINTER_MODELS = ['Bambu Lab X1 Carbon', 'Bambu Lab X1', 'Bambu Lab X1E']
+
+// Option definitions and the settings tab layout (see orca-config.mjs).
+const SOURCES = ['/src/libslic3r/PrintConfig.cpp', '/src/libslic3r/PrintConfigConstants.hpp', '/src/slic3r/GUI/Tab.cpp']
 
 const args = process.argv.slice(2)
 const srcArg = args.indexOf('--orca-src')
@@ -28,11 +32,10 @@ if (!existsSync(join(orcaSrc, 'resources/profiles/BBL.json'))) {
     'https://github.com/SoftFever/OrcaSlicer', orcaSrc)
   git('-C', orcaSrc, 'sparse-checkout', 'set', '--no-cone', 'resources/profiles/BBL/', '/resources/profiles/BBL.json',
     'resources/profiles/OrcaFilamentLibrary/', '/resources/profiles/OrcaFilamentLibrary.json',
-    '/src/libslic3r/PrintConfig.cpp')
+    ...SOURCES)
 }
-if (!existsSync(join(orcaSrc, 'src/libslic3r/PrintConfig.cpp'))) {
-  execFileSync('git', ['-C', orcaSrc, 'sparse-checkout', 'add', '/src/libslic3r/PrintConfig.cpp'], { stdio: 'inherit' })
-}
+const absent = SOURCES.filter((f) => !existsSync(join(orcaSrc, f)))
+if (absent.length) execFileSync('git', ['-C', orcaSrc, 'sparse-checkout', 'add', ...absent], { stdio: 'inherit' })
 
 // Option types from Orca's config definitions: the engine rejects an array
 // value for a scalar option, but Bambu presets store some scalars per variant.
@@ -43,6 +46,10 @@ for (const m of printConfig.matchAll(/this->add(?:_nullable)?\("([a-z0-9_]+)",\s
 }
 const VECTOR_TYPES = new Set(['coFloats', 'coInts', 'coStrings', 'coPercents', 'coFloatsOrPercents', 'coPoints', 'coBools', 'coEnums', 'coPointsGroups', 'coIntsGroups'])
 const scalarKeys = Object.keys(optionTypes).filter((k) => !VECTOR_TYPES.has(optionTypes[k])).sort()
+
+const processSchema = processSettingsSchema(printConfig,
+  readFileSync(join(orcaSrc, 'src/slic3r/GUI/Tab.cpp'), 'utf8'),
+  readFileSync(join(orcaSrc, 'src/libslic3r/PrintConfigConstants.hpp'), 'utf8'))
 
 const BBL = join(orcaSrc, 'resources/profiles/BBL')
 const vendor = JSON.parse(readFileSync(BBL + '.json', 'utf8'))
@@ -153,6 +160,7 @@ const models = PRINTER_MODELS.map((m) => {
 const bundle = {
   scalarKeys,
   source: `OrcaSlicer ${ORCA_TAG} resources/profiles/BBL (vendor version ${vendor.version})`,
+  processSchema,
   models,
   printers: printerOut,
   processes: processOut,
@@ -163,5 +171,6 @@ const outDir = join(ROOT, 'web/public/profiles')
 mkdirSync(outDir, { recursive: true })
 const json = JSON.stringify(bundle)
 writeFileSync(join(outDir, 'bbl-x1.json'), json)
+console.log(`process settings: ${processSchema.pages.length} pages, ${Object.keys(processSchema.options).length} options`)
 console.log(`option types: ${Object.keys(optionTypes).length} (${scalarKeys.length} scalar)`)
 console.log(`profiles: ${printerOut.length} printers, ${processOut.length} processes, ${filamentOut.length} filaments, ${(json.length / 1e6).toFixed(1)} MB`)
