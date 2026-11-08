@@ -1,4 +1,5 @@
-import type { ProcessSchema } from './schema'
+import type { MaterialTemps } from './filamentRules'
+import type { ProcessSchema, SettingsSchema } from './schema'
 
 // Bambu Lab X1 system profiles (built by scripts/build-profiles.mjs) and the
 // logic that turns a printer, process and filament selection into engine
@@ -30,6 +31,11 @@ export interface ProfileBundle {
   source: string
   /** Orca's process settings tab: pages, groups and option definitions. */
   processSchema: ProcessSchema
+  /** Orca's filament and printer settings tabs. */
+  filamentSchema: SettingsSchema
+  printerSchema: SettingsSchema
+  /** Orca's per-material temperature ranges (MaterialType.cpp), for the filament checks. */
+  materialTemps: MaterialTemps
   models: { name: string; default_bed_type: string | null; default_materials: string[]; model_id: string | null }[]
   printers: PrinterPreset[]
   processes: ProcessPreset[]
@@ -47,7 +53,7 @@ export async function loadBundle(): Promise<ProfileBundle> {
 // "Direct Drive High Flow"). The engine bridge does not collapse them, so the
 // host picks the active variant's value.
 const PRINT_OPTIONS_WITH_VARIANT = new Set(['print_extruder_id', 'print_extruder_variant'])
-const FILAMENT_OPTIONS_WITH_VARIANT = new Set([
+export const FILAMENT_OPTIONS_WITH_VARIANT = new Set([
   'filament_flow_ratio', 'filament_max_volumetric_speed', 'filament_extruder_variant', 'filament_retraction_length',
   'filament_z_hop', 'filament_z_hop_types', 'filament_retract_lift_above', 'filament_retract_lift_below',
   'filament_retract_lift_enforce', 'filament_retract_restart_extra', 'filament_retraction_speed',
@@ -60,7 +66,7 @@ const FILAMENT_OPTIONS_WITH_VARIANT = new Set([
   'activate_air_filtration', 'activate_air_filtration_during_print', 'activate_air_filtration_on_completion',
   'during_print_exhaust_fan_speed', 'complete_print_exhaust_fan_speed',
 ])
-const PRINTER_OPTIONS_WITH_VARIANT_1 = new Set([
+export const PRINTER_OPTIONS_WITH_VARIANT_1 = new Set([
   'nozzle_volume', 'retraction_length', 'z_hop', 'travel_slope', 'retract_lift_above', 'retract_lift_below',
   'retract_lift_enforce', 'z_hop_types', 'retraction_speed', 'deretraction_speed', 'retraction_minimum_travel',
   'retract_when_changing_layer', 'wipe', 'wipe_distance', 'retract_before_wipe', 'retract_length_toolchange',
@@ -68,7 +74,7 @@ const PRINTER_OPTIONS_WITH_VARIANT_1 = new Set([
   'retraction_distances_when_cut', 'nozzle_type', 'printer_extruder_id', 'printer_extruder_variant',
   'nozzle_flush_dataset',
 ])
-const PRINTER_OPTIONS_WITH_VARIANT_2 = new Set([
+export const PRINTER_OPTIONS_WITH_VARIANT_2 = new Set([
   'machine_max_acceleration_x', 'machine_max_acceleration_y', 'machine_max_acceleration_z',
   'machine_max_acceleration_e', 'machine_max_acceleration_extruding', 'machine_max_acceleration_retracting',
   'machine_max_acceleration_travel', 'machine_max_speed_x', 'machine_max_speed_y', 'machine_max_speed_z',
@@ -207,11 +213,12 @@ export function buildEngineConfig(b: ProfileBundle, sel: Selection): EngineConfi
   const fils = sel.filaments.map((slot) => {
     const f = b.filaments.find((x) => x.name === slot.preset)
     if (!f) throw new Error(`unknown filament preset ${slot.preset}`)
-    return { slot, preset: f, settings: { ...filamentSettings(f, sel.flow), ...(slot.overrides ?? {}) } }
+    // Overrides are stored like the preset (per-variant arrays), so pick the variant after applying them.
+    return { slot, preset: f, settings: filamentSettings({ ...f, settings: { ...f.settings, ...slot.overrides } }, sel.flow) }
   })
   const n = fils.length
   const scalars = new Set(b.scalarKeys)
-  const machine = scalarize({ ...machineSettings(printer, sel.flow), ...sel.printerOverrides }, scalars, sel.flow, printer.settings.printer_extruder_variant)
+  const machine = scalarize(machineSettings({ ...printer, settings: { ...printer.settings, ...sel.printerOverrides } }, sel.flow), scalars, sel.flow, printer.settings.printer_extruder_variant)
   const process = scalarize({ ...processSettings(proc, sel.flow), ...sel.processOverrides }, scalars, sel.flow, proc.settings.print_extruder_variant)
   const filament = mergeFilaments(
     fils.map((f) => scalarize(f.settings, scalars, sel.flow, f.preset.settings.filament_extruder_variant)), scalars)

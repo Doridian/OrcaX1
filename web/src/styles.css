@@ -337,3 +337,13 @@ textarea.changed { border-color: var(--warn); }
 .add-volume { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 4px; }
 .add-volume .actions { flex-wrap: wrap; }
 .objects-panel .grid3 .numfield input { padding-right: 4px; }
+/* Filament / printer settings dialogs */
+button.icon-btn { padding: 1px 5px; font-size: 13px; line-height: 1.2; color: var(--muted); flex: 0 0 auto; }
+button.modified { border-color: var(--warn); color: var(--warn); }
+dialog.settings-dialog { width: min(720px, calc(100vw - 32px)); }
+dialog.settings-dialog header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+dialog.settings-dialog header .subtitle { font-weight: normal; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+dialog.settings-dialog header .spacer { flex: 1; }
+dialog.settings-dialog .body { height: 70vh; }
+dialog.settings-dialog .body > p { margin: 0 0 6px; }
+input.override-check { margin: 0 4px 0 0; vertical-align: middle; }

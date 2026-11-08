@@ -5,7 +5,7 @@
 // is built from.
 
 /** Reads a C++ string literal sequence ("a" "b" ...) starting at s[i]; returns [text, end]. */
-function readStrings(s, i) {
+export function readStrings(s, i) {
   let out = ''
   let any = false
   for (;;) {
@@ -26,7 +26,7 @@ function readStrings(s, i) {
 }
 
 /** Text of a string expression: "x", L("x"), _L("x"), L_CONTEXT("x", "ctx"). */
-function stringExpr(expr) {
+export function stringExpr(expr) {
   const m = /^\s*(?:L|_L|_u8L|L_CONTEXT)?\s*\(?/.exec(expr)
   const [text] = readStrings(expr, m ? m[0].length : 0)
   return text
@@ -52,7 +52,7 @@ function parseEnumMaps(src) {
 }
 
 /** Splits a C++ argument list at top-level commas. */
-function splitArgs(s) {
+export function splitArgs(s) {
   const out = []
   let depth = 0, cur = '', str = false
   for (let i = 0; i < s.length; i++) {
@@ -95,6 +95,11 @@ function parseDefault(cls, args, enumMaps, constants = {}) {
     case 'ConfigOptionStrings': {
       const v = strs()
       return v.some((x) => x === null) ? undefined : v
+    }
+    case 'ConfigOptionEnumsGeneric': {
+      // { ZHopType::zhtSlope, ... }: one enum value per extruder/variant.
+      const v = a.map((x) => { const m = /^(\w+)\s*::\s*(\w+)$/.exec(x); return m ? enumMaps[m[1]]?.[m[2]] : undefined })
+      return v.some((x) => x === undefined) ? undefined : v
     }
     default: {
       const e = /^ConfigOptionEnum<(\w+)>$/.exec(cls)
@@ -144,7 +149,7 @@ export function parseOptionDefs(src, constants = {}) {
   const defs = {}
   const named = {} // C++ variable name -> def (e.g. def_top_fill_pattern)
   // One block per `def = this->add("key", coType);`
-  const starts = [...src.matchAll(/(?:auto\s+(\w+)\s*=\s*)?def\s*=\s*this->add(?:_nullable)?\("([a-z0-9_]+)",\s*(co\w+)\)\s*;/g)]
+  const starts = [...src.matchAll(/(?:auto\s+(\w+)\s*=\s*)?def\s*=\s*this->add(?:_nullable)?\("([A-Za-z0-9_]+)",\s*(co\w+)\)\s*;/g)]
   for (let n = 0; n < starts.length; n++) {
     const m = starts[n]
     const key = m[2]
