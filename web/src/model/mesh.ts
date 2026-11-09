@@ -1,6 +1,7 @@
 // Mesh import/export. Meshes are non-indexed triangle soups:
 // Float32Array with 9 floats (3 vertices) per triangle.
 import { strFromU8, unzipSync } from 'fflate'
+import { scaleTranslation, unitScale } from './project3mf'
 
 export interface ImportedMesh {
   name: string
@@ -93,6 +94,7 @@ export function parse3mf(bytes: Uint8Array): ImportedMesh[] {
     if (!data) throw new Error(`3MF: missing ${path}`)
     const xml = new DOMParser().parseFromString(strFromU8(data), 'application/xml')
     const objs = new Map<string, ModelObj>()
+    const k = unitScale(xml.documentElement.getAttribute('unit'))
     for (const o of Array.from(xml.getElementsByTagNameNS('*', 'object'))) {
       const entry: ModelObj = { name: o.getAttribute('name') ?? `object ${o.getAttribute('id')}` }
       const mesh = o.getElementsByTagNameNS('*', 'mesh')[0]
@@ -100,9 +102,9 @@ export function parse3mf(bytes: Uint8Array): ImportedMesh[] {
         const vs = mesh.getElementsByTagNameNS('*', 'vertex')
         const verts = new Float32Array(vs.length * 3)
         for (let i = 0; i < vs.length; i++) {
-          verts[i * 3] = +vs[i].getAttribute('x')!
-          verts[i * 3 + 1] = +vs[i].getAttribute('y')!
-          verts[i * 3 + 2] = +vs[i].getAttribute('z')!
+          verts[i * 3] = +vs[i].getAttribute('x')! * k
+          verts[i * 3 + 1] = +vs[i].getAttribute('y')! * k
+          verts[i * 3 + 2] = +vs[i].getAttribute('z')! * k
         }
         const ts = mesh.getElementsByTagNameNS('*', 'triangle')
         const out = new Float32Array(ts.length * 9)
@@ -117,14 +119,14 @@ export function parse3mf(bytes: Uint8Array): ImportedMesh[] {
         entry.components = Array.from(comps).map((c) => ({
           id: c.getAttribute('objectid')!,
           path: norm(c.getAttribute('p:path') ?? c.getAttributeNS('http://schemas.microsoft.com/3dmanufacturing/production/2015/06', 'path') ?? path),
-          m: parseMat(c.getAttribute('transform')),
+          m: scaleTranslation(parseMat(c.getAttribute('transform')), k),
         }))
       }
       objs.set(o.getAttribute('id')!, entry)
     }
     docs.set(path, objs)
     ;(objs as any).__build = Array.from(xml.getElementsByTagNameNS('*', 'item')).map((it) => ({
-      id: it.getAttribute('objectid')!, m: parseMat(it.getAttribute('transform')),
+      id: it.getAttribute('objectid')!, m: scaleTranslation(parseMat(it.getAttribute('transform')), k),
     }))
     return objs
   }
