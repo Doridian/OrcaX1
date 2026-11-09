@@ -212,6 +212,20 @@ export interface ProjectFile {
 
 interface RawObject { mesh?: Float32Array; components: { path: string; id: string; t: number[] }[] }
 
+/**
+ * Millimetres per unit of a 3MF <model unit="...">: vertex coordinates and
+ * transform translations are in that unit (the spec's default is millimetre;
+ * Onshape, for one, exports metres).
+ */
+export function unitScale(unit: string | null | undefined): number {
+  return ({ micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000 } as Record<string, number>)[unit ?? ''] ?? 1
+}
+
+/** A 3MF transform (12 numbers, row-vector) with its translation scaled by `k`. */
+export function scaleTranslation(t: number[], k: number): number[] {
+  return k === 1 ? t : [...t.slice(0, 9), t[9] * k, t[10] * k, t[11] * k]
+}
+
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
 const parseT = (s: string | null) => {
   const v = (s ?? '').trim().split(/\s+/).map(Number)
@@ -230,6 +244,7 @@ const mulT = (a: number[], b: number[]) => {
 
 function parseModel(xml: string, path: string): { objects: Map<string, RawObject>; items: { id: string; t: number[]; printable: boolean }[] } {
   const objects = new Map<string, RawObject>()
+  const k = unitScale(attr(/<model\b[^>]*>/.exec(xml)?.[0] ?? '', 'unit'))
   for (const m of xml.matchAll(/<object\b([^>]*)>([\s\S]*?)<\/object>/g)) {
     const id = attr(m[1], 'id')
     if (!id) continue
@@ -238,7 +253,7 @@ function parseModel(xml: string, path: string): { objects: Map<string, RawObject
     const mesh = /<mesh>([\s\S]*?)<\/mesh>/.exec(body)
     if (mesh) {
       const verts: number[] = []
-      for (const v of mesh[1].matchAll(/<vertex\s+x="([^"]*)"\s+y="([^"]*)"\s+z="([^"]*)"/g)) verts.push(+v[1], +v[2], +v[3])
+      for (const v of mesh[1].matchAll(/<vertex\s+x="([^"]*)"\s+y="([^"]*)"\s+z="([^"]*)"/g)) verts.push(+v[1] * k, +v[2] * k, +v[3] * k)
       const tris = [...mesh[1].matchAll(/<triangle\s+v1="(\d+)"\s+v2="(\d+)"\s+v3="(\d+)"/g)]
       const out = new Float32Array(tris.length * 9)
       tris.forEach((t, i) => {
@@ -251,12 +266,12 @@ function parseModel(xml: string, path: string): { objects: Map<string, RawObject
     }
     for (const c of body.matchAll(/<component\b([^>]*)\/?>/g)) {
       const p = attr(c[1], 'p:path')
-      raw.components.push({ id: attr(c[1], 'objectid') ?? '', path: p ? p.replace(/^\//, '') : path, t: parseT(attr(c[1], 'transform')) })
+      raw.components.push({ id: attr(c[1], 'objectid') ?? '', path: p ? p.replace(/^\//, '') : path, t: scaleTranslation(parseT(attr(c[1], 'transform')), k) })
     }
     objects.set(id, raw)
   }
   const items = [...xml.matchAll(/<item\b([^>]*)\/?>/g)].map((m) => ({
-    id: attr(m[1], 'objectid') ?? '', t: parseT(attr(m[1], 'transform')), printable: attr(m[1], 'printable') !== '0',
+    id: attr(m[1], 'objectid') ?? '', t: scaleTranslation(parseT(attr(m[1], 'transform')), k), printable: attr(m[1], 'printable') !== '0',
   }))
   return { objects, items }
 }
