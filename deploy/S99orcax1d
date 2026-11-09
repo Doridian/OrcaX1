@@ -5,7 +5,7 @@
 #
 # The release (web UI, install.sh) lives on the SD card under
 # /mnt/sdcard/orcax1. Everything that runs as root or holds secrets lives on
-# internal flash under /userdata/orcax1, out of reach of the SD card's FTPS
+# internal flash under /userdata/bin/orcax1, out of reach of the SD card's FTPS
 # server (which anyone with the LAN access code can use):
 #   orcax1d        the binary (install.sh copies it here from the SD card)
 #   orcax1d.conf   optional overrides, a shell fragment that sets ORCAX1D_*
@@ -15,7 +15,7 @@
 #   state/         certificates, sessions, settings and their credentials
 
 BASE=/mnt/sdcard/orcax1
-HOME_DIR=/userdata/orcax1
+HOME_DIR=/userdata/bin/orcax1
 RUN_BIN=$HOME_DIR/orcax1d
 CONF=$HOME_DIR/orcax1d.conf
 PIDFILE=/var/run/orcax1d.pid

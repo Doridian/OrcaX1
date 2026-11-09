@@ -13,22 +13,22 @@ the daemon logs a warning and only redirects 8080. `ORCAX1D_REDIRECT_LISTEN`
 ## Layout on the printer
 
 ```
-/mnt/sdcard/orcax1/orcax1d        the release's binary (install.sh copies it to /userdata/orcax1)
-/mnt/sdcard/orcax1/www/           the web UI (contents of web/dist)
-/mnt/sdcard/orcax1/install.sh     installs/upgrades/uninstalls (run over SSH)
-/mnt/sdcard/orcax1/S99orcax1d     init script (install.sh copies it to /etc/init.d)
-/userdata/orcax1/orcax1d          the binary that runs (internal flash)
-/userdata/orcax1/state/           generated TLS CA + certificate, login sessions, OIDC and ACME settings with their secrets
-/userdata/orcax1/orcax1d.conf     optional ORCAX1D_* overrides (shell syntax)
-/etc/init.d/S99orcax1d            init script (persists in X1Plus's overlay)
-/tmp/orcax1d.log                  log (previous run: /tmp/orcax1d.log.old)
+/mnt/sdcard/orcax1/orcax1d         the release's binary (install.sh copies it to /userdata/bin/orcax1)
+/mnt/sdcard/orcax1/www/            the web UI (contents of web/dist)
+/mnt/sdcard/orcax1/install.sh      installs/upgrades/uninstalls (run over SSH)
+/mnt/sdcard/orcax1/S99orcax1d      init script (install.sh copies it to /etc/init.d)
+/userdata/bin/orcax1/orcax1d       the binary that runs (internal flash)
+/userdata/bin/orcax1/state/        generated TLS CA + certificate, login sessions, OIDC and ACME settings with their secrets
+/userdata/bin/orcax1/orcax1d.conf  optional ORCAX1D_* overrides (shell syntax)
+/etc/init.d/S99orcax1d             init script (persists in X1Plus's overlay)
+/tmp/orcax1d.log                   log (previous run: /tmp/orcax1d.log.old)
 ```
 
 Everything on the SD card can be read and replaced by anyone with the LAN
 access code, through the printer's FTPS server. That is why the binary that
 runs as root, its configuration and every secret it keeps (certificate
 keys, sessions, OIDC client secret, DNS API credentials) live on internal
-flash under `/userdata/orcax1` instead.
+flash under `/userdata/bin/orcax1` instead.
 
 ## Install from a release
 
@@ -52,11 +52,11 @@ You need X1Plus with SSH enabled (root login).
 To upgrade, open Settings → Update in the web UI and upload the new zip. The
 daemon unpacks it into `orcax1/`, checks that the new binary runs, runs
 `install.sh` and restarts (log: `/tmp/orcax1d-update.log`).
-`/userdata/orcax1/state/` and `orcax1d.conf` are kept. Or do it by hand: unpack a newer zip over the old folder and run `install.sh`
+`/userdata/bin/orcax1/state/` and `orcax1d.conf` are kept. Or do it by hand: unpack a newer zip over the old folder and run `install.sh`
 again; it also deletes web files left over from the previous release (those
 not in `www.manifest`). To remove OrcaX1, run
 `sh /mnt/sdcard/orcax1/install.sh uninstall`, then delete
-`/mnt/sdcard/orcax1` and `/userdata/orcax1`.
+`/mnt/sdcard/orcax1` and `/userdata/bin/orcax1`.
 
 ## Install from a local build
 
@@ -75,7 +75,7 @@ X1Plus runs every `/etc/init.d/S??*` script at boot, and `/etc` lives in
 X1Plus's persistent overlay, so installing `S99orcax1d` there is all that is
 needed. Control it with `/etc/init.d/S99orcax1d {start|stop|restart}`.
 
-The init script runs `/userdata/orcax1/orcax1d` (put there by `install.sh`)
+The init script runs `/userdata/bin/orcax1/orcax1d` (put there by `install.sh`)
 at nice level 10 with the defaults for the printer (MQTT on 127.0.0.1:8883,
 access code from `/config/device/access_token`, serial from `bbl_3dpsn`, SD
 card at `/mnt/sdcard`). It never runs anything from the SD card itself, so
@@ -123,7 +123,7 @@ The access code login stays available unless you start the daemon with
 The browser needs a secure context (HTTPS) for the slicer's
 `SharedArrayBuffer`. On first start the daemon creates a
 small local CA and a certificate for the printer's hostname and IPv4
-addresses in `/userdata/orcax1/state/` (re-issued automatically if the IP
+addresses in `/userdata/bin/orcax1/state/` (re-issued automatically if the IP
 changes). The CA exists only to sign that certificate and is deliberately
 not offered for download: **never install it as a trusted root** on your
 devices. It is not limited to the printer's names, so anyone who got hold
@@ -157,7 +157,7 @@ the printer alone. They are kept on internal flash, but anyone who gets
 root on the printer can read them.
 
 To use your own certificate instead, set `ORCAX1D_TLS_CERT` and
-`ORCAX1D_TLS_KEY` in `/userdata/orcax1/orcax1d.conf` (keep the key on
+`ORCAX1D_TLS_KEY` in `/userdata/bin/orcax1/orcax1d.conf` (keep the key on
 `/userdata` too, not on the SD card).
 
 ## Development: remote mode
@@ -192,14 +192,14 @@ cd web && npm run dev      # or: ORCAX1_DAEMON=http://other-host:8443 npm run de
 ```
 
 Drop `--no-tls` to test HTTPS from other devices; the certificate then lives
-in `--state-dir` (default `/userdata/orcax1/state`, so pass e.g.
+in `--state-dir` (default `/userdata/bin/orcax1/state`, so pass e.g.
 `--state-dir ./state` on a PC).
 
 ## Port 443
 
 The daemon runs as root from the init script, so it binds 443 directly (no
 `setcap` needed). To use another port, set `ORCAX1D_LISTEN` in
-`/userdata/orcax1/orcax1d.conf`, e.g. `ORCAX1D_LISTEN=0.0.0.0:8443`.
+`/userdata/bin/orcax1/orcax1d.conf`, e.g. `ORCAX1D_LISTEN=0.0.0.0:8443`.
 
 ## Options
 

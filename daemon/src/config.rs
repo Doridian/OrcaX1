@@ -57,7 +57,7 @@ pub struct Config {
     #[arg(
         long,
         env = "ORCAX1D_STATE_DIR",
-        default_value = "/userdata/orcax1/state"
+        default_value = "/userdata/bin/orcax1/state"
     )]
     pub state_dir: PathBuf,
 
