@@ -14,7 +14,7 @@ BASE=/mnt/sdcard/orcax1
 # Internal flash: the binary that runs, orcax1d.conf and state/ (certificates,
 # sessions, settings and their credentials). Unlike the SD card, not readable
 # or writable over the printer's FTPS server.
-HOME_DIR=/userdata/orcax1
+HOME_DIR=/userdata/bin/orcax1
 INIT=/etc/init.d/S99orcax1d
 
 die() {

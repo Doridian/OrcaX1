@@ -356,7 +356,7 @@ files at the zip root) with `orcax1d`, `www/index.html`, `install.sh` and
 running binary and runs its `--version`, which rejects a binary for the
 wrong CPU or a corrupt one. Only then is each top-level file and directory
 swapped into place (put back if a step fails), so `www/` ends up exactly the
-new release's. The state dir and `orcax1d.conf` live in `/userdata/orcax1`
+new release's. The state dir and `orcax1d.conf` live in `/userdata/bin/orcax1`
 and are not touched; `install.sh` copies the new binary there. A rejected zip
 gives `400 {"error":"…"}` and changes nothing.
 

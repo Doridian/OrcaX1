@@ -339,7 +339,7 @@ function Certificate() {
       </div>
       <p class="muted small-text">
         Requesting a certificate accepts the CA's terms of service. Credentials are stored on the printer's internal
-        flash (<code>/userdata/orcax1/state/acme/</code>). Only use a token limited to this one record or zone's DNS,
+        flash (<code>/userdata/bin/orcax1/state/acme/</code>). Only use a token limited to this one record or zone's DNS,
         never an account-wide key.
       </p>
     </div>
