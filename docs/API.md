@@ -14,7 +14,7 @@ Cross-Origin-Embedder-Policy: require-corp
 Cross-Origin-Resource-Policy: same-origin
 ```
 
-Everything under `/api/` needs a login except `/api/auth/*`; without one it answers `401 {"error":"not logged in"}` (the
+(except `/api/alive`, below). Everything under `/api/` needs a login except `/api/auth/*` and `/api/alive`; without one it answers `401 {"error":"not logged in"}` (the
 WebSocket upgrade too). Static files are public, so the login page can load.
 `--auth none` turns authentication off.
 
@@ -365,3 +365,44 @@ later the daemon runs `install.sh` detached (output in that log), which
 restarts it. Clients wait for `boot_id` in `/api/info` to change. While an
 update runs, and after `install.sh` has been started, further requests get
 `409`.
+
+## Printer outlet
+
+The printer's power outlet, through an ESPHome device running the
+`orcax1_outlet` component (see [OUTLET.md](OUTLET.md)). The daemon calls the
+device's `/orcax1/*` endpoints for the browser, so the HTTPS page never talks
+to the plain-HTTP device, and switching off needs a login: the device only
+switches off for requests with its `off_token`, which the daemon keeps in
+`<state-dir>/outlet.json` and never sends to a browser.
+
+### `GET /api/outlet`
+
+→ `{"url":"http://192.168.1.60","token_set":true}`; `url` is empty when no
+outlet is set up.
+
+### `PUT /api/outlet`
+
+`{"url":"192.168.1.60","token":"…","clear_token":false}`. `url` is the
+device's `http://host[:port]` (scheme optional, nothing after the host; empty
+turns the outlet off). An empty `token` keeps the saved one if the URL is
+unchanged. → the same as `GET`.
+
+### `GET /api/outlet/state`
+
+The device's state, as it reports it:
+`{"printer":"https://…","on":true,"power":253.1,"linked":true,"can_turn_off":true}`.
+`on`, `power` and `linked` (the device's link to Home Assistant) are `null`
+when unknown. `404` without an outlet, `502` when the device doesn't answer.
+
+### `POST /api/outlet/switch`
+
+`{"on":true}` or `{"on":false}`. → `200` with the state once the device has
+accepted the request; the outlet's state changes when it reports back.
+Switching off without a saved token is `400`; a token the device refuses is
+`502`.
+
+### `GET /api/alive`
+
+No login, any origin: `204` with `Access-Control-Allow-Origin: *` and
+`Cross-Origin-Resource-Policy: cross-origin`. The outlet device's page polls
+it to tell when the printer is up.

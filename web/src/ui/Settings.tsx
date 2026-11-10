@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks'
 import { ask } from '../state/confirm'
 import { deleteAcmeCert, getAcme, getOidc, info, issueAcme, registerAcmeAccount, saveAcme, saveOidc, uploadUpdate, type AcmeConfig, type AcmeView, type DaemonInfo, type OidcConfig, type OidcView } from '../api'
 import { auth, logout, refreshAuth } from '../state/auth'
+import { OutletSettings } from '../outlet/OutletSettings'
 
 export function Settings() {
   return (
@@ -9,6 +10,7 @@ export function Settings() {
       <Account />
       {auth.value?.enabled && <SingleSignOn />}
       <Certificate />
+      <OutletSettings />
       <Update />
     </div>
   )

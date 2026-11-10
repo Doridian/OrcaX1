@@ -6,6 +6,7 @@ mod files;
 mod ftps;
 mod http_client;
 mod mqtt;
+mod outlet;
 mod printer;
 mod ssdp;
 mod static_files;
@@ -45,6 +46,7 @@ pub struct App {
     pub auth: auth::Auth,
     pub oidc: Arc<auth::oidc::Oidc>,
     pub acme: Arc<acme::Acme>,
+    pub outlet: outlet::Outlet,
 }
 
 fn init_logging() {
@@ -96,10 +98,9 @@ async fn security_headers(mut res: Response) -> Response {
         "cross-origin-embedder-policy",
         HeaderValue::from_static("require-corp"),
     );
-    h.insert(
-        "cross-origin-resource-policy",
-        HeaderValue::from_static("same-origin"),
-    );
+    // Unless the handler opened it up (/api/alive).
+    h.entry("cross-origin-resource-policy")
+        .or_insert(HeaderValue::from_static("same-origin"));
     h.insert(
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
@@ -202,12 +203,16 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/acme/account", post(acme::account))
         .route("/api/acme/cert", delete(acme::delete_cert))
         .route("/api/oidc", get(auth::oidc::get).put(auth::oidc::put))
+        .route("/api/outlet", get(outlet::get).put(outlet::put))
+        .route("/api/outlet/state", get(outlet::state))
+        .route("/api/outlet/switch", post(outlet::switch))
         .route_layer(axum::middleware::from_fn_with_state(
             app.clone(),
             auth::require,
         ));
     Router::new()
         .merge(protected)
+        .route("/api/alive", get(outlet::alive))
         .route("/api/auth/status", get(auth::status))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
@@ -435,7 +440,10 @@ async fn run(mut cfg: Config) -> Result<(), String> {
         http,
     );
 
+    let outlet = outlet::Outlet::new(&cfg.state_dir);
+
     let app = Arc::new(App {
+        outlet,
         auth,
         oidc,
         acme,

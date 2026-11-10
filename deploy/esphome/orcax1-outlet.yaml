@@ -1,0 +1,94 @@
+# OrcaX1 printer outlet (ESPHome package)
+#
+# Lets OrcaX1 show the printer's power outlet with its live power draw and
+# switch it, including while the printer (and so OrcaX1) is off: the browser
+# is then sent to a small page on this device to switch the printer on.
+#
+# Add it to any always-on ESPHome device (an ESP32 or ESP8266 that is NOT
+# powered through that outlet). The outlet can be any Home Assistant switch
+# with a power sensor (Zigbee, Z-Wave, Wi-Fi, ...): this device mirrors the
+# two entities and asks Home Assistant to switch the outlet. Browsers never
+# get a Home Assistant token, and this device can only do this one thing.
+#
+# Turning the printer ON works for anyone on the LAN (from this device's
+# page). Turning it OFF needs off_token, which only OrcaX1's daemon has, so
+# it needs an OrcaX1 login.
+#
+# Usage, in the device's YAML:
+#
+#   packages:
+#     orcax1_outlet:
+#       url: https://github.com/Doridian/OrcaX1
+#       ref: main
+#       files:
+#         - path: deploy/esphome/orcax1-outlet.yaml
+#           vars:
+#             outlet_switch: switch.printer_plug
+#             outlet_power: sensor.printer_plug_power
+#             # The address you open OrcaX1 at: scheme://host[:port]
+#             printer_url: https://192.168.1.50
+#             # A random secret (e.g. `openssl rand -hex 24`), entered in
+#             # OrcaX1 too. Put it in secrets.yaml.
+#             off_token: !secret orcax1_off_token
+#
+# Then:
+# - Home Assistant: Settings → Devices & services → ESPHome → this device →
+#   Configure, enable "Allow the device to perform Home Assistant actions".
+#   Without it, switching does nothing.
+# - OrcaX1: Settings → Printer outlet: this device's address
+#   (http://<ip or name>) and the same off_token.
+#
+# The entities are internal: Home Assistant already has the real outlet and
+# doesn't need copies. This package needs no web_server; if the device has
+# one with `include_internal: true`, note that the mirrored state shows there
+# (switching only goes through /orcax1).
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/Doridian/OrcaX1
+      ref: main
+      path: deploy/esphome/components
+    components: [orcax1_outlet]
+
+sensor:
+  - platform: homeassistant
+    id: orcax1_outlet_power
+    name: "OrcaX1 Outlet Power"
+    entity_id: ${outlet_power}
+    unit_of_measurement: W
+    device_class: power
+    accuracy_decimals: 1
+    internal: true
+
+binary_sensor:
+  - platform: homeassistant
+    id: orcax1_outlet_state
+    name: "OrcaX1 Outlet"
+    entity_id: ${outlet_switch}
+    internal: true
+  - platform: template
+    id: orcax1_outlet_link
+    name: "OrcaX1 Home Assistant"
+    device_class: connectivity
+    internal: true
+    condition:
+      api.connected:
+        state_subscription_only: true
+
+orcax1_outlet:
+  printer_url: ${printer_url}
+  state_id: orcax1_outlet_state
+  power_id: orcax1_outlet_power
+  link_id: orcax1_outlet_link
+  off_token: ${off_token}
+  turn_on_action:
+    - homeassistant.action:
+        action: switch.turn_on
+        data:
+          entity_id: ${outlet_switch}
+  turn_off_action:
+    - homeassistant.action:
+        action: switch.turn_off
+        data:
+          entity_id: ${outlet_switch}

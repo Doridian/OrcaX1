@@ -28,6 +28,13 @@ const boot = () => refreshAuth().catch(() => setTimeout(boot, 2000))
 boot()
 render(<Root />, document.getElementById('app')!)
 
+// The service worker serves a small "printer is off" page (outlet.html) when
+// the printer doesn't answer; see sw.template.js. Not in dev: Vite serves
+// sources, not the built page it caches.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register(new URL('sw.js', document.baseURI)).catch((e) => console.warn('service worker:', e))
+}
+
 if (import.meta.env.DEV) {
   // Debug handle for the browser console / automated tests.
   Promise.all([import('./state/slice'), import('./state/project'), import('./state/settings'), import('./state/printer'), import('./state/hardware'), import('./state/projectFile'), import('./state/volumes')]).then(([slice, project, settings, printer, hardware, projectFile, volumes]) => {

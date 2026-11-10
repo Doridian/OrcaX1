@@ -348,3 +348,34 @@ dialog.settings-dialog header .spacer { flex: 1; }
 dialog.settings-dialog .body { height: 70vh; }
 dialog.settings-dialog .body > p { margin: 0 0 6px; }
 input.override-check { margin: 0 4px 0 0; vertical-align: middle; }
+
+/* Printer outlet (src/outlet) */
+.spinner {
+  display: inline-block; flex: 0 0 auto; box-sizing: border-box; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+button.outlet-switch {
+  position: relative; flex: 0 0 auto; width: 40px; height: 22px; padding: 0; border-radius: 11px;
+  background: var(--border); border-color: var(--border); transition: background 0.15s, border-color 0.15s;
+}
+button.outlet-switch.on { background: var(--accent); border-color: var(--accent); }
+button.outlet-switch .knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--panel); display: grid; place-items: center; transition: left 0.15s;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+button.outlet-switch.on .knob { left: 20px; }
+button.outlet-switch.pending { opacity: 1; cursor: progress; }
+button.outlet-switch .knob .spinner { border-width: 2px; }
+.outlet-row { display: flex; align-items: center; gap: 10px; }
+.outlet-title { flex: 1; font-weight: 600; }
+.outlet-line { display: flex; align-items: center; gap: 8px; }
+.outlet-watts { font-variant-numeric: tabular-nums; }
+.outlet-line .outlet-watts { margin-left: auto; font-size: 20px; font-weight: 600; }
+.outlet-chip { gap: 8px; }
+.outlet-chip button.outlet-switch { transform: scale(0.85); }
+.outlet-settings-status { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.login .card.offline { width: min(380px, 100%); }
