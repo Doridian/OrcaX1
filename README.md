@@ -56,6 +56,12 @@ OrcaSlicer in the browser, served by a Bambu Lab X1 / X1C / X1E running
   Let's Encrypt or any ACME CA via DNS-01 (Cloudflare, RFC 2136 / TSIG,
   acme-dns, DynDNS-style TXT updates such as Hurricane Electric), or dns-persist-01 with a TXT record you set up once by hand, so
   the printer never needs to be reachable from the internet.
+* Printer power outlet: shows its live power draw in the top bar and
+  switches it, through an always-on ESPHome device that relays an outlet
+  from Home Assistant or is the plug itself. While the printer is off, a
+  browser that has been there before is sent to a small page on that device
+  to switch it on; switching off needs a login. See
+  [docs/OUTLET.md](docs/OUTLET.md).
 * Device page: live camera, job progress (pause, resume, stop, speed), temps
   and fans, AMS trays (edit, load, unload, re-read RFID), jog, home, extrude,
   G-code console, SD card browser, HMS errors.
@@ -122,8 +128,9 @@ daemon/     orcax1d (Rust): static files, /api/ws MQTT bridge, /api/camera/whep,
             auth/ (login providers, sessions), acme/ (DNS-01 certificates)
 web/        UI (Vite + Preact + three.js); public/slicer-worker.js hosts the WASM engine
 scripts/    fetch-engine.sh, build-profiles.mjs (Orca BBL profiles → bundle), precompress, builds, deploy
-deploy/     init script and install notes for X1Plus
+deploy/     init script and install notes for X1Plus; esphome/ has the outlet package and component
 docs/API.md daemon HTTP/WebSocket contract
+docs/OUTLET.md printer outlet setup (ESPHome, Home Assistant)
 ```
 
 ## Notes and limitations

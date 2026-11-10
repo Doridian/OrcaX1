@@ -198,3 +198,35 @@ export async function saveOidc(config: OidcConfig, clearSecret = false): Promise
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ config, clear_secret: clearSecret }),
   }))).json()
 }
+
+export interface OutletView { url: string; token_set: boolean }
+
+/** The outlet device's /orcax1/state, through the daemon. */
+export interface OutletState {
+  printer: string
+  on: boolean | null
+  power: number | null
+  linked: boolean | null
+  can_turn_off: boolean
+}
+
+export async function getOutlet(): Promise<OutletView> {
+  return (await check(await fetch(api('outlet')))).json()
+}
+
+/** An empty token keeps the saved one (for the same device) unless `clearToken`. */
+export async function saveOutlet(url: string, token: string, clearToken = false): Promise<OutletView> {
+  return (await check(await fetch(api('outlet'), {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, token, clear_token: clearToken }),
+  }))).json()
+}
+
+export async function getOutletState(): Promise<OutletState> {
+  return (await check(await fetch(api('outlet/state'), { cache: 'no-store' }))).json()
+}
+
+export async function switchOutlet(on: boolean): Promise<void> {
+  await check(await fetch(api('outlet/switch'), {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on }),
+  }))
+}

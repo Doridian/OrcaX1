@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals'
 import { gcodeState, mqttConnected, serial, status, wsConnected } from '../state/printer'
+import { OutletChip } from '../outlet/OutletChip'
 import { ConfirmHost } from './Confirm'
 import { Device } from './device/Device'
 import { Settings } from './Settings'
@@ -37,6 +38,7 @@ export function App() {
         </div>
         <div class="spacer" />
         <JobChip />
+        <OutletChip />
         <div class="conn" title="daemon websocket / printer MQTT">
           <span class={`dot ${wsConnected.value ? 'on' : ''}`} /> daemon
           <span class={`dot ${mqttConnected.value ? 'on' : ''}`} /> printer{serial.value ? ` ${serial.value}` : ''}
