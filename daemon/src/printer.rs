@@ -268,10 +268,47 @@ pub struct PrintRequest {
     flow_cali: bool,
     #[serde(default)]
     vibration_cali: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     layer_inspect: bool,
     #[serde(default = "default_bed_type")]
     bed_type: String,
+    /// 0 off, 1 on, 2 auto (printer decides). Defaults to `bed_leveling`.
+    auto_bed_leveling: Option<i64>,
+    /// 0 off, 1 on, 2 auto. Defaults to `flow_cali`.
+    extrude_cali_flag: Option<i64>,
+    /// 0 off, 1 on, 2 auto. Only dual-nozzle printers act on it; Orca sends auto.
+    #[serde(default = "default_auto")]
+    nozzle_offset_cali: i64,
+}
+
+fn default_auto() -> i64 {
+    2
+}
+
+/// The calibration / inspection options of `project_file`, as OrcaSlicer's
+/// network plugin sends them: the booleans plus their integer modes, under
+/// both spellings of bed leveling (older firmware reads `bed_levelling`).
+fn print_options(req: &PrintRequest, p: &mut Map<String, Value>) {
+    p.insert("timelapse".into(), req.timelapse.into());
+    p.insert("bed_type".into(), req.bed_type.clone().into());
+    p.insert("bed_leveling".into(), req.bed_leveling.into());
+    p.insert("bed_levelling".into(), req.bed_leveling.into());
+    p.insert(
+        "auto_bed_leveling".into(),
+        req.auto_bed_leveling
+            .unwrap_or(req.bed_leveling as i64)
+            .into(),
+    );
+    p.insert("flow_cali".into(), req.flow_cali.into());
+    p.insert(
+        "extrude_cali_flag".into(),
+        req.extrude_cali_flag.unwrap_or(req.flow_cali as i64).into(),
+    );
+    p.insert("nozzle_offset_cali".into(), req.nozzle_offset_cali.into());
+    p.insert("vibration_cali".into(), req.vibration_cali.into());
+    p.insert("layer_inspect".into(), req.layer_inspect.into());
+    // Bit 2 is "timelapse to internal storage"; the X1 has none.
+    p.insert("cfg".into(), "0".into());
 }
 
 /// Global tray id -> {"ams_id","slot_id"} as used by `ams_mapping2`.
@@ -342,12 +379,7 @@ pub async fn print(
     for k in ["project_id", "profile_id", "task_id", "subtask_id"] {
         p.insert(k.into(), "0".into());
     }
-    p.insert("timelapse".into(), req.timelapse.into());
-    p.insert("bed_type".into(), req.bed_type.into());
-    p.insert("bed_levelling".into(), req.bed_leveling.into());
-    p.insert("flow_cali".into(), req.flow_cali.into());
-    p.insert("vibration_cali".into(), req.vibration_cali.into());
-    p.insert("layer_inspect".into(), req.layer_inspect.into());
+    print_options(&req, &mut p);
     p.insert("use_ams".into(), use_ams.into());
     p.insert("ams_mapping2".into(), ams_mapping2(&req.ams_mapping).into());
     p.insert("ams_mapping".into(), json!(req.ams_mapping));
@@ -407,6 +439,34 @@ mod tests {
                 json!({"ams_id": 255, "slot_id": 255}),
                 json!({"ams_id": 128, "slot_id": 0}),
             ]
+        );
+    }
+
+    #[test]
+    fn print_options_like_orca() {
+        let req: PrintRequest =
+            serde_json::from_value(json!({"path": "a.3mf", "flow_cali": true})).unwrap();
+        let mut p = Map::new();
+        print_options(&req, &mut p);
+        assert_eq!(
+            Value::Object(p),
+            json!({"timelapse": false, "bed_type": "auto", "bed_leveling": true, "bed_levelling": true,
+                   "auto_bed_leveling": 1, "flow_cali": true, "extrude_cali_flag": 1, "nozzle_offset_cali": 2,
+                   "vibration_cali": false, "layer_inspect": true, "cfg": "0"})
+        );
+        let req: PrintRequest =
+            serde_json::from_value(json!({"path": "a.3mf", "bed_leveling": false,
+            "auto_bed_leveling": 2, "layer_inspect": false}))
+            .unwrap();
+        let mut p = Map::new();
+        print_options(&req, &mut p);
+        assert_eq!(
+            (
+                &p["auto_bed_leveling"],
+                &p["extrude_cali_flag"],
+                &p["layer_inspect"]
+            ),
+            (&json!(2), &json!(0), &json!(false))
         );
     }
 
