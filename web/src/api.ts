@@ -62,6 +62,30 @@ export interface PrintRequest {
   bed_type: string
 }
 
+export type PrintOptions = Pick<PrintRequest, 'bed_leveling' | 'flow_cali' | 'vibration_cali' | 'layer_inspect' | 'timelapse'>
+
+/** OrcaSlicer's defaults for an X1: leveling and flow calibration on, first-layer
+ *  inspection on (the printer's own setting still decides), no vibration calibration. */
+export const DEFAULT_PRINT_OPTIONS: PrintOptions = {
+  bed_leveling: true, flow_cali: true, vibration_cali: false, layer_inspect: true, timelapse: false,
+}
+
+const OPTIONS_KEY = 'orcax1.printOptions'
+
+/** The options last used to start a print, like Orca remembers them per printer. */
+export function loadPrintOptions(): PrintOptions {
+  try {
+    const saved = JSON.parse(localStorage.getItem(OPTIONS_KEY) ?? '{}')
+    const out = { ...DEFAULT_PRINT_OPTIONS }
+    for (const k of Object.keys(out) as (keyof PrintOptions)[]) if (typeof saved?.[k] === 'boolean') out[k] = saved[k]
+    return out
+  } catch { return { ...DEFAULT_PRINT_OPTIONS } }
+}
+
+export function savePrintOptions(o: PrintOptions) {
+  try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(o)) } catch { /* private mode */ }
+}
+
 export async function startPrint(req: PrintRequest) {
   return (await check(await fetch(api('print'), {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req),

@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals'
 import { useEffect, useState } from 'preact/hooks'
-import { deleteFile, downloadUrl, listFiles, startPrint, type FileEntry } from '../../api'
+import { deleteFile, downloadUrl, listFiles, loadPrintOptions, startPrint, type FileEntry } from '../../api'
 import { cmd, commandLog, gcodeState, isPrinting, mqttConnected, status } from '../../state/printer'
 import { bundle, sel } from '../../state/settings'
 import { ask } from '../../state/confirm'
@@ -337,7 +337,7 @@ function Files() {
   const print = async (path: string) => {
     if (!await ask({ title: `Print ${path}?`, body: 'Plate 1, with filaments mapped to AMS trays in file order.', confirm: 'Print' })) return
     try {
-      await startPrint({ path, plate: 1, use_ams: true, ams_mapping: [], timelapse: false, bed_leveling: true, flow_cali: false, vibration_cali: false, layer_inspect: false, bed_type: 'auto' })
+      await startPrint({ path, plate: 1, use_ams: true, ams_mapping: [], ...loadPrintOptions(), bed_type: 'auto' })
     } catch (e: any) { setErr(e?.message ?? String(e)) }
   }
   const sorted = [...(entries ?? [])].sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || b.mtime - a.mtime)

@@ -6,7 +6,7 @@ import { bundle, sel } from '../state/settings'
 import { finalizeBambu3mf, type PlateInfo } from '../slicer/bambu3mf'
 import type { Progress } from '../slicer/engine'
 import { exportPrintable, plates } from '../state/slice'
-import { uploadFile, startPrint } from '../api'
+import { uploadFile, startPrint, loadPrintOptions, savePrintOptions } from '../api'
 import { sceneView } from './Workspace'
 
 /** Engine export + Bambu metadata (thumbnails, slice_info) for the printer. */
@@ -53,7 +53,7 @@ export function PrintDialog({ onClose }: { onClose: () => void }) {
 
   const baseName = (objects.value.find((o) => o.plate === plate)?.name ?? 'print').replace(/[^\w.\- ]+/g, '_').slice(0, 60)
   const [name, setName] = useState(baseName)
-  const [opts, setOpts] = useState({ bed_leveling: true, flow_cali: false, timelapse: false, vibration_cali: false, layer_inspect: false })
+  const [opts, setOpts] = useState(loadPrintOptions)
   const [phase, setPhase] = useState<string | null>(null)
   const [pct, setPct] = useState(0)
   const [err, setErr] = useState<string | null>(null)
@@ -83,6 +83,7 @@ export function PrintDialog({ onClose }: { onClose: () => void }) {
       await uploadFile(path, bytes, (f) => setPct(Math.round(f * 100)))
       if (andPrint) {
         setPhase('Starting print…')
+        savePrintOptions(opts)
         const ams_mapping = fils.map((f, i) => (needed.includes(i) ? f.tray ?? -1 : -1))
         await startPrint({
           path,

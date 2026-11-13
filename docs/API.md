@@ -311,16 +311,22 @@ Starts printing a sliced Bambu project (`.gcode.3mf` / `.3mf` with
   "ams_mapping": [0, 2],               // per project filament: global tray id (ams*4+slot), 254 = external spool, -1 = unused
   "timelapse": false,
   "bed_leveling": true,
-  "flow_cali": false,
+  "flow_cali": true,
   "vibration_cali": false,
-  "layer_inspect": false,
-  "bed_type": "auto"
+  "layer_inspect": true,
+  "bed_type": "auto",
+  "auto_bed_leveling": 1,              // optional: 0 off, 1 on, 2 auto; default from bed_leveling
+  "extrude_cali_flag": 1,              // optional: 0 off, 1 on, 2 auto; default from flow_cali
+  "nozzle_offset_cali": 2              // optional: 0 off, 1 on, 2 auto (dual-nozzle printers only)
 }
 ```
 
 Only `path` is required. Defaults: `plate` 1, `use_ams` true iff
 `ams_mapping` is non-empty, `ams_mapping` `[]`, `bed_leveling` true,
-`bed_type` `"auto"`, everything else false.
+`layer_inspect` true, `bed_type` `"auto"`, `nozzle_offset_cali` 2,
+everything else false. The calibration fields follow what OrcaSlicer's
+network plugin sends. With `layer_inspect` false the X1 skips the lidar
+first-layer and heatbed scans that the start G-code registers.
 
 The daemon computes the md5 (in remote mode by reading the file back over
 FTPS) and publishes:
@@ -329,8 +335,9 @@ FTPS) and publishes:
 {"print":{"command":"project_file","sequence_id":"…","param":"Metadata/plate_1.gcode",
  "url":"file:///sdcard/orcax1/model.gcode.3mf","md5":"…","file":"","subtask_name":"model",
  "project_id":"0","profile_id":"0","task_id":"0","subtask_id":"0",
- "timelapse":false,"bed_type":"auto","bed_levelling":true,"flow_cali":false,
- "vibration_cali":false,"layer_inspect":false,"use_ams":true,
+ "timelapse":false,"bed_type":"auto","bed_leveling":true,"bed_levelling":true,
+ "auto_bed_leveling":1,"flow_cali":true,"extrude_cali_flag":1,"nozzle_offset_cali":2,
+ "vibration_cali":false,"layer_inspect":true,"cfg":"0","use_ams":true,
  "ams_mapping":[0,2],"ams_mapping2":[{"ams_id":0,"slot_id":0},{"ams_id":0,"slot_id":2}]}}
 ```
 
