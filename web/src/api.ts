@@ -105,12 +105,19 @@ export interface DaemonInfo {
   mqtt_connected: boolean
   camera_available: boolean
   camera_error: string | null
+  /** Whether POST /api/camera/restart can restart the printer's camera service (on the printer, under X1Plus). */
+  camera_restart_available: boolean
   mode: 'local' | 'remote'
   sd_dir: string
 }
 
 export async function info(): Promise<DaemonInfo> {
   return (await check(await fetch(api('info'), { cache: 'no-store' }))).json()
+}
+
+/** Restarts the printer's camera service (ipcam); resolves once its RTSP server is back. */
+export async function restartCamera(): Promise<void> {
+  await check(await fetch(api('camera/restart'), { method: 'POST' }))
 }
 
 /** Uploads a release zip; the daemon installs it and restarts (202 when accepted). */

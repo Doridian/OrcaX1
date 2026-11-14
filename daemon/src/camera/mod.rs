@@ -2,6 +2,7 @@
 //! by all WebRTC (WHEP) viewers.
 
 pub mod h264;
+pub mod restart;
 pub mod rtsp;
 pub mod webrtc;
 
@@ -32,6 +33,8 @@ struct Frame {
 pub struct CameraHub {
     tx: broadcast::Sender<Frame>,
     wake: Notify,
+    /// Cuts a failed session's backoff short (after a camera service restart).
+    retry: Notify,
     /// Current codec string, e.g. "avc1.640028".
     codec: Mutex<Option<String>>,
     /// Why the last upstream attempt failed; cleared when a stream starts.
@@ -51,6 +54,7 @@ impl CameraHub {
         Arc::new(Self {
             tx,
             wake: Notify::new(),
+            retry: Notify::new(),
             codec: Mutex::new(None),
             last_error: Mutex::new(None),
             available: AtomicBool::new(true),
@@ -67,6 +71,12 @@ impl CameraHub {
 
     pub fn last_error(&self) -> Option<String> {
         self.last_error.lock().unwrap().clone()
+    }
+
+    /// Retry the upstream now instead of when the current backoff ends.
+    pub fn retry_now(&self) {
+        *self.last_error.lock().unwrap() = None;
+        self.retry.notify_one();
     }
 
     fn error(&self, msg: &str) {
@@ -102,8 +112,12 @@ pub async fn run(hub: Arc<CameraHub>, cfg: Arc<Config>) {
         if started.elapsed() > Duration::from_secs(60) {
             backoff = Duration::from_secs(1);
         }
-        tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(Duration::from_secs(30));
+        tokio::select! {
+            _ = tokio::time::sleep(backoff) => {
+                backoff = (backoff * 2).min(Duration::from_secs(30));
+            }
+            _ = hub.retry.notified() => backoff = Duration::from_secs(1),
+        }
     }
 }
 

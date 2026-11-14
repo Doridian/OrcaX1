@@ -123,6 +123,7 @@ async fn info_handler(State(app): State<Arc<App>>) -> impl IntoResponse {
         "mqtt_connected": app.printer.connected(),
         "camera_available": app.camera.available(),
         "camera_error": app.camera.last_error(),
+        "camera_restart_available": camera::restart::available(&app),
         "mode": if app.cfg.printer.is_some() { "remote" } else { "local" },
         "sd_dir": app.store_desc,
     }))
@@ -186,6 +187,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/ws", get(printer::ws_handler))
         .route("/api/camera/whep", post(camera::whep_offer))
         .route("/api/camera/whep/{id}", delete(camera::whep_delete))
+        .route("/api/camera/restart", post(camera::restart::restart))
         .route("/api/files", get(files::list).delete(files::delete))
         .route("/api/files/download", get(files::download))
         .route(

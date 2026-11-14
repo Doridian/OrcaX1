@@ -3,6 +3,9 @@
 // recovery and (hardware) decoding into a <video>. Needs a UDP route to the
 // printer (port 8443 by default).
 import { useEffect, useRef, useState } from 'preact/hooks'
+import { restartCamera } from '../../api'
+import { ask } from '../../state/confirm'
+import { isPrinting } from '../../state/printer'
 
 /** Treat the feed as stalled when no frame has arrived for this long. */
 const STALL_MS = 3000
@@ -12,6 +15,11 @@ export function Camera() {
   const video = useRef<HTMLVideoElement>(null)
   const [state, setState] = useState('connecting…')
   const [fps, setFps] = useState(0)
+  // The daemon can't reach the printer's camera and could restart its camera service.
+  const [canRestart, setCanRestart] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  // Read by the poll below, so it doesn't overwrite the restart's status.
+  const restartingRef = useRef(false)
 
   useEffect(() => {
     if (typeof RTCPeerConnection === 'undefined') {
@@ -41,7 +49,9 @@ export function Camera() {
     const showUpstreamError = async () => {
       try {
         const info = await (await fetch(new URL('api/info', document.baseURI))).json()
-        if (!closed && info.camera_error) setState(`camera: ${info.camera_error}`)
+        if (closed || restartingRef.current) return
+        if (info.camera_error) setState(`camera: ${info.camera_error}`)
+        setCanRestart(!!info.camera_error && !!info.camera_restart_available)
       } catch { /* daemon unreachable: the connection state will say so */ }
     }
 
@@ -50,7 +60,8 @@ export function Camera() {
       frames = 0
       ticks++
       const flowing = hasFrameCallback ? performance.now() - lastFrame < STALL_MS : lastFrame > 0
-      if (flowing) { setState(''); return }
+      if (flowing) { setState(''); setCanRestart(false); return }
+      if (restartingRef.current) return
       if (pc?.connectionState === 'connected') setState((s) => s.startsWith('camera:') ? s : 'waiting for video…')
       if (ticks % 3 === 0) showUpstreamError()
     }, 1000)
@@ -131,10 +142,41 @@ export function Camera() {
     }
   }, [])
 
+  const restart = async () => {
+    const printing = isPrinting.value
+    if (!(await ask({
+      title: 'Restart the camera service?',
+      body: <>
+        <p>This restarts the printer's camera service (<code>ipcam</code>), which fixes a camera that stopped answering. It takes up to a minute.</p>
+        <p>Everything else that uses the camera is interrupted while it restarts, including <b>timelapse recording</b>{printing ? <>: the current print's timelapse may be cut short or lost</> : null}, and the Bambu app's live view. The print itself is not affected.</p>
+      </>,
+      confirm: 'Restart camera service',
+      danger: true,
+    }))) return
+    setRestarting(true)
+    restartingRef.current = true
+    setState('restarting the camera service…')
+    try {
+      await restartCamera()
+      setCanRestart(false)
+      setState('camera service restarted, waiting for video…')
+    } catch (e) {
+      setState(`camera restart failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setRestarting(false)
+      restartingRef.current = false
+    }
+  }
+
   return (
     <div class="camera">
       <video ref={video} autoplay muted playsInline disablePictureInPicture />
       <div class="overlay">{state || `${fps} fps`}</div>
+      {(canRestart || restarting) && (
+        <button class="small restart" disabled={restarting} onClick={restart}>
+          {restarting ? 'Restarting camera service…' : 'Restart camera service'}
+        </button>
+      )}
     </div>
   )
 }
