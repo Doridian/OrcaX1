@@ -127,6 +127,7 @@ file extension fall back to `index.html`. `.wasm` is served as
   "mqtt_connected": true,
   "camera_available": true,           // false after the last upstream camera attempt failed
   "camera_error": null,               // why the last upstream camera attempt failed, if it did
+  "camera_restart_available": true,   // POST /api/camera/restart works (on the printer, under X1Plus)
   "mode": "local",                    // "local" (on the printer) or "remote" (dev PC, --printer)
   "sd_dir": "/mnt/sdcard"             // remote mode: "ftps://<printer>:990/"
 }
@@ -277,6 +278,23 @@ end the session; the daemon also drops a viewer whose ICE checks stop.
   keeps the upstream retrying; video starts once the camera recovers.
 * Errors (JSON `{"error":"…"}`): 400 for an unusable offer, 503 when 8
   viewers are already connected or no UDP socket could be bound.
+
+### `POST /api/camera/restart`: restart the printer's camera service
+
+The printer's RTSPS server (live555 inside Bambu's `ipcam`) can wedge: it
+accepts TCP connections but never answers, so `camera_error` reads
+`camera TLS handshake timeout` until `ipcam` is restarted. This endpoint
+restarts it with `/etc/init.d/S99ipcam_service` and then publishes the
+RTSP `init` command that the screen otherwise sends only at boot (DDS topic
+`device/request/liveview`, through X1Plus's Python DDS bindings), since a
+restarted `ipcam` keeps its RTSP server off without it. It answers once port
+322 listens again (typically within 10 s) with `{"ok":true}`, and makes the
+upstream retry immediately.
+
+Restarting `ipcam` interrupts everything else it does, including timelapse
+recording of a running print and the Bambu app's live view; the UI warns
+before calling this. Errors: 409 in remote mode, without X1Plus, or while a
+restart is already running; 500 with the step that failed.
 
 ## Files on the SD card
 
